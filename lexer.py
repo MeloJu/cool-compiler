@@ -1,8 +1,12 @@
 """
-Analisador léxico para a linguagem COOL (Classroom Object Oriented Language).
+Analisador léxico para a linguagem COOL (Classroom Object Oriented Language),
+construído com PLY (Python Lex-Yacc) — a versão em Python das ferramentas
+clássicas lex/yacc citadas no enunciado.
 
-Implementação manual (sem geradores de lexer): percorre o código-fonte
-caractere a caractere reconhecendo os tokens da linguagem.
+Em vez de escrever o loop de leitura na mão, aqui só *declaramos* os tokens
+(cada um como uma expressão regular) e o PLY monta o tokenizer sozinho.
+Comentários de bloco aninhados e strings usam "estados exclusivos" do PLY
+(`states`), que são o equivalente aos "start conditions" do flex.
 
 Tokens reconhecidos:
     - Palavras-chave: class, else, fi, if, in, inherits, isvoid, let, loop,
@@ -12,10 +16,11 @@ Tokens reconhecidos:
     - OBJECTID: identificador iniciado com letra minúscula
     - INT_CONST: sequência de dígitos
     - STR_CONST: string entre aspas, com escapes (\\n \\t \\b \\f \\" \\\\ etc.)
-    - Símbolos: { } ( ) : ; , . @ ~ * / + - < = <- <= =>
+    - Símbolos literais: { } ( ) : ; , . @ ~ * / + - < =
+    - Símbolos de 2 caracteres: <- <= =>
     - Comentários: linha (--) e bloco aninhado ((* *)), ambos descartados
 
-Erros léxicos detectados:
+Erros léxicos detectados (viram token ERROR em vez de exceção):
     - Caractere desconhecido
     - String não terminada (fim de linha ou fim de arquivo dentro da string)
     - String contendo caractere nulo
@@ -27,9 +32,12 @@ Erros léxicos detectados:
 from dataclasses import dataclass
 from typing import List, Optional
 
+import ply.lex as lex
+
 MAX_STR_LEN = 1024
 
-KEYWORDS = {
+# palavra reservada (minúscula) -> nome do token
+reserved = {
     "class": "CLASS",
     "else": "ELSE",
     "fi": "FI",
@@ -49,32 +57,227 @@ KEYWORDS = {
     "not": "NOT",
 }
 
-# Símbolos de 1 caractere (os de 2 caracteres são tratados à parte)
-SYMBOLS = {
-    "{": "'{'",
-    "}": "'}'",
-    "(": "'('",
-    ")": "')'",
-    ":": "':'",
-    ";": "';'",
-    ",": "','",
-    ".": "'.'",
-    "@": "'@'",
-    "~": "'~'",
-    "*": "'*'",
-    "/": "'/'",
-    "+": "'+'",
-    "-": "'-'",
-    "<": "'<'",
-    "=": "'='",
-}
+# tokens que não carregam valor (o tipo já diz tudo) ao imprimir
+_NO_VALUE = set(reserved.values()) | {"ASSIGN", "LE", "DARROW"}
 
-TWO_CHAR_SYMBOLS = {
-    "<-": "ASSIGN",
-    "<=": "LE",
-    "=>": "DARROW",
-}
+# --- vocabulário exigido pelo PLY -----------------------------------------
+tokens = [
+    "ASSIGN", "LE", "DARROW",
+    "TYPEID", "OBJECTID", "INT_CONST", "STR_CONST", "BOOL_CONST",
+    "ERROR",
+] + list(reserved.values())
 
+# símbolos de 1 caractere: o PLY cria o token sozinho, com type == o caractere
+literals = ["{", "}", "(", ")", ":", ";", ",", ".", "@", "~", "*", "/", "+", "-", "<", "="]
+
+# estados exclusivos: enquanto ativos, só as regras "t_<estado>_*" valem
+states = (
+    ("comment", "exclusive"),
+    ("string", "exclusive"),
+)
+
+
+# ---------------------------------------------------------------------------
+# Estado INITIAL
+# ---------------------------------------------------------------------------
+
+t_ignore = " \t\r\f\v"          # espaços em branco são simplesmente pulados
+t_ASSIGN = r"<-"
+t_LE = r"<="
+t_DARROW = r"=>"
+
+
+def t_TYPEID(t):
+    r"[A-Z][A-Za-z0-9_]*"
+    low = t.value.lower()
+    if low in reserved:
+        t.type = reserved[low]
+    return t
+
+
+def t_OBJECTID(t):
+    r"[a-z][A-Za-z0-9_]*"
+    low = t.value.lower()
+    if low == "true" and t.value[0] == "t":
+        t.type = "BOOL_CONST"
+        t.value = "true"
+    elif low == "false" and t.value[0] == "f":
+        t.type = "BOOL_CONST"
+        t.value = "false"
+    elif low in reserved:
+        t.type = reserved[low]
+    return t
+
+
+def t_INT_CONST(t):
+    r"\d+"
+    return t
+
+
+def t_line_comment(t):
+    r"--[^\n]*"
+    pass  # descartado, não vira token
+
+
+def t_open_comment(t):
+    r"\(\*"
+    t.lexer.comment_start_line = t.lexer.lineno
+    t.lexer.comment_depth = 1
+    t.lexer.begin("comment")
+
+
+def t_unmatched_close_comment(t):
+    r"\*\)"
+    t.type = "ERROR"
+    t.value = "Unmatched *)"
+    return t
+
+
+def t_open_string(t):
+    r'"'
+    t.lexer.string_start_line = t.lexer.lineno
+    t.lexer.string_buffer = ""
+    t.lexer.string_has_null = False
+    t.lexer.begin("string")
+
+
+def t_newline(t):
+    r"\n+"
+    t.lexer.lineno += len(t.value)
+
+
+def t_error(t):
+    t.type = "ERROR"
+    t.value = t.value[0]
+    t.lexer.skip(1)
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Estado "comment": corpo de um comentário de bloco (* ... *), com aninhamento
+# ---------------------------------------------------------------------------
+
+t_comment_ignore = ""
+
+
+def t_comment_open(t):
+    r"\(\*"
+    t.lexer.comment_depth += 1
+
+
+def t_comment_close(t):
+    r"\*\)"
+    t.lexer.comment_depth -= 1
+    if t.lexer.comment_depth == 0:
+        t.lexer.begin("INITIAL")
+
+
+def t_comment_newline(t):
+    r"\n"
+    t.lexer.lineno += 1
+
+
+def t_comment_body(t):
+    r"."
+    pass  # qualquer outro caractere dentro do comentário é ignorado
+
+
+def t_comment_eof(t):
+    line = t.lexer.comment_start_line
+    t.lexer.begin("INITIAL")
+    t.type = "ERROR"
+    t.value = "EOF in comment"
+    t.lineno = line
+    return t
+
+
+def t_comment_error(t):
+    t.lexer.skip(1)
+
+
+# ---------------------------------------------------------------------------
+# Estado "string": corpo de uma string "...", com escapes e validações
+# ---------------------------------------------------------------------------
+
+t_string_ignore = ""
+
+
+def t_string_escape(t):
+    r"\\(.|\n)"
+    esc = t.value[1]
+    if esc == "n":
+        t.lexer.string_buffer += "\n"
+    elif esc == "t":
+        t.lexer.string_buffer += "\t"
+    elif esc == "b":
+        t.lexer.string_buffer += "\b"
+    elif esc == "f":
+        t.lexer.string_buffer += "\f"
+    elif esc == "\0":
+        t.lexer.string_has_null = True
+    else:
+        # "\c" para qualquer outro c vira apenas c (cobre \" \\ e a
+        # continuação de linha "\<newline>")
+        t.lexer.string_buffer += esc
+    if esc == "\n":
+        t.lexer.lineno += 1
+
+
+def t_string_null(t):
+    r"\x00"
+    t.lexer.string_has_null = True
+
+
+def t_string_close(t):
+    r'"'
+    line = t.lexer.string_start_line
+    t.lexer.begin("INITIAL")
+    t.lineno = line
+    if t.lexer.string_has_null:
+        t.type = "ERROR"
+        t.value = "String contains null character."
+    elif len(t.lexer.string_buffer) > MAX_STR_LEN:
+        t.type = "ERROR"
+        t.value = "String constant too long"
+    else:
+        t.type = "STR_CONST"
+        t.value = _escape_for_display(t.lexer.string_buffer)
+    return t
+
+
+def t_string_newline(t):
+    r"\n"
+    line = t.lexer.string_start_line
+    t.lexer.lineno += 1
+    t.lexer.begin("INITIAL")
+    t.type = "ERROR"
+    t.value = "Unterminated string constant"
+    t.lineno = line
+    return t
+
+
+def t_string_body(t):
+    r'[^\\\n"\x00]+'
+    t.lexer.string_buffer += t.value
+
+
+def t_string_eof(t):
+    line = t.lexer.string_start_line
+    t.lexer.begin("INITIAL")
+    t.type = "ERROR"
+    t.value = "EOF in string constant"
+    t.lineno = line
+    return t
+
+
+def t_string_error(t):
+    t.lexer.skip(1)
+
+
+# ---------------------------------------------------------------------------
+# Camada fina por cima do PLY: Token com o mesmo formato de antes e a função
+# tokenize(source) usada pelo resto do projeto (main.py, testes).
+# ---------------------------------------------------------------------------
 
 @dataclass
 class Token:
@@ -83,6 +286,8 @@ class Token:
     line: int
 
     def __str__(self) -> str:
+        if len(self.type) == 1:  # símbolo literal: { } ( ) : ; , . @ ~ * / + - < =
+            return f"#{self.line} '{self.type}'"
         if self.value is None:
             return f"#{self.line} {self.type}"
         if self.type == "STR_CONST":
@@ -113,211 +318,21 @@ def _escape_for_display(s: str) -> str:
     return "".join(out)
 
 
-class Lexer:
-    def __init__(self, source: str):
-        self.src = source
-        self.pos = 0
-        self.line = 1
-        self.length = len(source)
-        self.tokens: List[Token] = []
-
-    # -- utilitários de leitura -------------------------------------------
-    def _peek(self, offset: int = 0) -> str:
-        p = self.pos + offset
-        return self.src[p] if p < self.length else ""
-
-    def _advance(self) -> str:
-        ch = self.src[self.pos]
-        self.pos += 1
-        if ch == "\n":
-            self.line += 1
-        return ch
-
-    def _add(self, type_: str, value: Optional[str], line: int) -> None:
-        self.tokens.append(Token(type_, value, line))
-
-    # -- laço principal -----------------------------------------------------
-    def tokenize(self) -> List[Token]:
-        while self.pos < self.length:
-            ch = self._peek()
-
-            if ch in " \t\r\f\v\n":
-                self._advance()
-                continue
-
-            if ch == "-" and self._peek(1) == "-":
-                self._skip_line_comment()
-                continue
-
-            if ch == "(" and self._peek(1) == "*":
-                self._skip_block_comment()
-                continue
-
-            if ch == "*" and self._peek(1) == ")":
-                start_line = self.line
-                self._advance()
-                self._advance()
-                self._add("ERROR", "Unmatched *)", start_line)
-                continue
-
-            if ch == '"':
-                self._read_string()
-                continue
-
-            if ch.isdigit():
-                self._read_integer()
-                continue
-
-            if ch.isalpha():
-                self._read_identifier()
-                continue
-
-            if self._read_symbol():
-                continue
-
-            start_line = self.line
-            bad = self._advance()
-            self._add("ERROR", bad, start_line)
-
-        return self.tokens
-
-    # -- comentários -----------------------------------------------------
-    def _skip_line_comment(self) -> None:
-        while self.pos < self.length and self._peek() != "\n":
-            self._advance()
-
-    def _skip_block_comment(self) -> None:
-        start_line = self.line
-        self._advance()
-        self._advance()  # consome "(*"
-        depth = 1
-        while depth > 0:
-            if self.pos >= self.length:
-                self._add("ERROR", "EOF in comment", start_line)
-                return
-            if self._peek() == "(" and self._peek(1) == "*":
-                self._advance()
-                self._advance()
-                depth += 1
-            elif self._peek() == "*" and self._peek(1) == ")":
-                self._advance()
-                self._advance()
-                depth -= 1
-            else:
-                self._advance()
-
-    # -- strings -----------------------------------------------------
-    def _read_string(self) -> None:
-        start_line = self.line
-        self._advance()  # consome a aspas de abertura
-
-        chars: List[str] = []
-        contains_null = False
-        error: Optional[str] = None
-
-        while True:
-            if self.pos >= self.length:
-                error = "EOF in string constant"
-                break
-
-            ch = self._peek()
-
-            if ch == '"':
-                self._advance()
-                break
-
-            if ch == "\n":
-                self._advance()
-                error = "Unterminated string constant"
-                break
-
-            if ch == "\0":
-                contains_null = True
-                self._advance()
-                continue
-
-            if ch == "\\":
-                self._advance()
-                if self.pos >= self.length:
-                    error = "EOF in string constant"
-                    break
-                esc = self._advance()
-                if esc == "n":
-                    chars.append("\n")
-                elif esc == "t":
-                    chars.append("\t")
-                elif esc == "b":
-                    chars.append("\b")
-                elif esc == "f":
-                    chars.append("\f")
-                elif esc == "\0":
-                    contains_null = True
-                else:
-                    # "\c" para qualquer outro c vira apenas c (inclui \n literal
-                    # de continuação de linha, \" e \\)
-                    chars.append(esc)
-                continue
-
-            chars.append(ch)
-            self._advance()
-
-        if contains_null:
-            self._add("ERROR", "String contains null character.", start_line)
-        elif error:
-            self._add("ERROR", error, start_line)
-        elif len(chars) > MAX_STR_LEN:
-            self._add("ERROR", "String constant too long", start_line)
-        else:
-            self._add("STR_CONST", _escape_for_display("".join(chars)), start_line)
-
-    # -- números -----------------------------------------------------
-    def _read_integer(self) -> None:
-        start_line = self.line
-        start = self.pos
-        while self.pos < self.length and self._peek().isdigit():
-            self._advance()
-        self._add("INT_CONST", self.src[start:self.pos], start_line)
-
-    # -- identificadores e palavras-chave --------------------------------
-    def _read_identifier(self) -> None:
-        start_line = self.line
-        start = self.pos
-        while self.pos < self.length and (self._peek().isalnum() or self._peek() == "_"):
-            self._advance()
-        value = self.src[start:self.pos]
-        lower = value.lower()
-
-        if lower == "true" and value[0] == "t":
-            self._add("BOOL_CONST", "true", start_line)
-        elif lower == "false" and value[0] == "f":
-            self._add("BOOL_CONST", "false", start_line)
-        elif lower in KEYWORDS:
-            self._add(KEYWORDS[lower], None, start_line)
-        elif value[0].isupper():
-            self._add("TYPEID", value, start_line)
-        else:
-            self._add("OBJECTID", value, start_line)
-
-    # -- símbolos -----------------------------------------------------
-    def _read_symbol(self) -> bool:
-        two = self._peek() + self._peek(1)
-        if two in TWO_CHAR_SYMBOLS:
-            start_line = self.line
-            self._advance()
-            self._advance()
-            self._add(TWO_CHAR_SYMBOLS[two], None, start_line)
-            return True
-
-        one = self._peek()
-        if one in SYMBOLS:
-            start_line = self.line
-            self._advance()
-            self._add(SYMBOLS[one], None, start_line)
-            return True
-
-        return False
+_lexer = lex.lex()
 
 
 def tokenize(source: str) -> List[Token]:
-    """Função de conveniência: recebe o código-fonte e devolve a lista de tokens."""
-    return Lexer(source).tokenize()
+    """Recebe o código-fonte COOL e devolve a lista de tokens (inclui ERROR)."""
+    lexer = _lexer.clone()
+    lexer.begin("INITIAL")
+    lexer.lineno = 1
+    lexer.input(source)
+
+    result: List[Token] = []
+    while True:
+        tok = lexer.token()
+        if tok is None:
+            break
+        value = None if tok.type in _NO_VALUE or len(tok.type) == 1 else tok.value
+        result.append(Token(tok.type, value, tok.lineno))
+    return result

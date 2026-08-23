@@ -91,13 +91,19 @@ class TestComentarios(unittest.TestCase):
 
 class TestSimbolos(unittest.TestCase):
     def test_operadores_um_e_dois_caracteres(self):
+        # símbolos de 1 caractere são "literals" do PLY: o type é o próprio
+        # caractere (a formatação com aspas simples só aparece no print)
         self.assertEqual(
             types("<- <= => { } ( ) : ; , . @ ~ * / + - <"),
             [
-                "ASSIGN", "LE", "DARROW", "'{'", "'}'", "'('", "')'", "':'",
-                "';'", "','", "'.'", "'@'", "'~'", "'*'", "'/'", "'+'", "'-'", "'<'",
+                "ASSIGN", "LE", "DARROW", "{", "}", "(", ")", ":",
+                ";", ",", ".", "@", "~", "*", "/", "+", "-", "<",
             ],
         )
+
+    def test_impressao_de_simbolo_literal(self):
+        toks = tokenize("{")
+        self.assertEqual(str(toks[0]), "#1 '{'")
 
     def test_contagem_de_linhas(self):
         toks = tokenize("class\nMain")
