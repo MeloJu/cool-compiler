@@ -321,12 +321,18 @@ def _escape_for_display(s: str) -> str:
 _lexer = lex.lex()
 
 
-def tokenize(source: str) -> List[Token]:
-    """Recebe o código-fonte COOL e devolve a lista de tokens (inclui ERROR)."""
+def build_lexer(source: str):
+    """Cria uma instância limpa do lexer do PLY para o parser consumir."""
     lexer = _lexer.clone()
     lexer.begin("INITIAL")
     lexer.lineno = 1
     lexer.input(source)
+    return lexer
+
+
+def tokenize(source: str) -> List[Token]:
+    """Recebe o código-fonte COOL e devolve a lista de tokens (inclui ERROR)."""
+    lexer = build_lexer(source)
 
     result: List[Token] = []
     while True:
