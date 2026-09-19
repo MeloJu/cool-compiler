@@ -10,7 +10,30 @@ from parser import parse, ProgramNode, ClassNode
 class TestParserInicial(unittest.TestCase):
     def test_classe_vazia(self):
         ast = parse("class Main {\n};")
-        self.assertEqual(ast, ProgramNode(classes=[ClassNode(name="Main")]))
+        self.assertEqual(ast, ProgramNode(classes=[ClassNode(name="Main", parent="Object")]))
+
+    def test_classe_com_heranca(self):
+        ast = parse("class Main inherits IO {\n};")
+        self.assertEqual(ast, ProgramNode(classes=[ClassNode(name="Main", parent="IO")]))
+
+    def test_varias_classes(self):
+        source = """
+        class A {
+        };
+
+        class B inherits A {
+        };
+        """
+        ast = parse(source)
+        self.assertEqual(
+            ast,
+            ProgramNode(
+                classes=[
+                    ClassNode(name="A", parent="Object"),
+                    ClassNode(name="B", parent="A"),
+                ]
+            ),
+        )
 
     def test_rejeita_ponto_virgula_faltando(self):
         with self.assertRaises(SyntaxError):

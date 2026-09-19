@@ -12,6 +12,7 @@ from lexer import build_lexer, tokens
 @dataclass
 class ClassNode:
     name: str
+    parent: str = "Object"
 
 
 @dataclass
@@ -20,13 +21,28 @@ class ProgramNode:
 
 
 def p_program(p):
-    """program : class_decl"""
-    p[0] = ProgramNode(classes=[p[1]])
+    """program : class_list"""
+    p[0] = ProgramNode(classes=p[1])
+
+
+def p_class_list_single(p):
+    """class_list : class_decl"""
+    p[0] = [p[1]]
+
+
+def p_class_list_many(p):
+    """class_list : class_list class_decl"""
+    p[0] = p[1] + [p[2]]
 
 
 def p_class_decl(p):
     """class_decl : CLASS TYPEID '{' '}' ';'"""
     p[0] = ClassNode(name=p[2])
+
+
+def p_class_decl_inherits(p):
+    """class_decl : CLASS TYPEID INHERITS TYPEID '{' '}' ';'"""
+    p[0] = ClassNode(name=p[2], parent=p[4])
 
 
 def p_error(p):
