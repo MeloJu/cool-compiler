@@ -5,12 +5,15 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ast_nodes import (
+    AssignNode,
     AttributeNode,
+    BinaryOpNode,
     ClassNode,
     FormalNode,
     LiteralNode,
     MethodNode,
     ProgramNode,
+    UnaryOpNode,
     VariableNode,
 )
 from parser import parse
@@ -94,6 +97,77 @@ class TestParserInicial(unittest.TestCase):
                 ],
                 return_type="Int",
                 body=VariableNode(name="a"),
+            ),
+        )
+
+    def test_precedencia_multiplicacao_antes_de_soma(self):
+        ast = parse("class Main { calc() : Int { 1 + 2 * 3 }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            BinaryOpNode(
+                operator="+",
+                left=LiteralNode(value=1, type_name="Int"),
+                right=BinaryOpNode(
+                    operator="*",
+                    left=LiteralNode(value=2, type_name="Int"),
+                    right=LiteralNode(value=3, type_name="Int"),
+                ),
+            ),
+        )
+
+    def test_parenteses_alteram_precedencia(self):
+        ast = parse("class Main { calc() : Int { (1 + 2) * 3 }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            BinaryOpNode(
+                operator="*",
+                left=BinaryOpNode(
+                    operator="+",
+                    left=LiteralNode(value=1, type_name="Int"),
+                    right=LiteralNode(value=2, type_name="Int"),
+                ),
+                right=LiteralNode(value=3, type_name="Int"),
+            ),
+        )
+
+    def test_comparacao(self):
+        ast = parse("class Main { menor() : Bool { 1 <= 2 }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            BinaryOpNode(
+                operator="<=",
+                left=LiteralNode(value=1, type_name="Int"),
+                right=LiteralNode(value=2, type_name="Int"),
+            ),
+        )
+
+    def test_atribuicao(self):
+        ast = parse("class Main { set() : Int { x <- 1 + 2 }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            AssignNode(
+                name="x",
+                value=BinaryOpNode(
+                    operator="+",
+                    left=LiteralNode(value=1, type_name="Int"),
+                    right=LiteralNode(value=2, type_name="Int"),
+                ),
+            ),
+        )
+
+    def test_operadores_unarios(self):
+        ast = parse("class Main { teste() : Bool { not isvoid ~x }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            UnaryOpNode(
+                operator="not",
+                operand=UnaryOpNode(
+                    operator="isvoid",
+                    operand=UnaryOpNode(
+                        operator="~",
+                        operand=VariableNode(name="x"),
+                    ),
+                ),
             ),
         )
 

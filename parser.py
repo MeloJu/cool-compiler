@@ -1,15 +1,29 @@
 import ply.yacc as yacc
 
 from ast_nodes import (
+    AssignNode,
     AttributeNode,
+    BinaryOpNode,
     ClassNode,
     FormalNode,
     LiteralNode,
     MethodNode,
     ProgramNode,
+    UnaryOpNode,
     VariableNode,
 )
 from lexer import build_lexer, tokens
+
+
+precedence = (
+    ("right", "ASSIGN"),
+    ("right", "NOT"),
+    ("nonassoc", "<", "LE", "="),
+    ("left", "+", "-"),
+    ("left", "*", "/"),
+    ("right", "ISVOID"),
+    ("right", "UNARY_NEG"),
+)
 
 
 def p_program(p):
@@ -80,6 +94,42 @@ def p_formal_list_many(p):
 def p_formal(p):
     """formal : OBJECTID ':' TYPEID"""
     p[0] = FormalNode(name=p[1], type_name=p[3])
+
+
+def p_expr_assign(p):
+    """expr : OBJECTID ASSIGN expr"""
+    p[0] = AssignNode(name=p[1], value=p[3])
+
+
+def p_expr_binary(p):
+    """expr : expr '+' expr
+            | expr '-' expr
+            | expr '*' expr
+            | expr '/' expr
+            | expr '<' expr
+            | expr LE expr
+            | expr '=' expr"""
+    p[0] = BinaryOpNode(operator=p[2], left=p[1], right=p[3])
+
+
+def p_expr_not(p):
+    """expr : NOT expr"""
+    p[0] = UnaryOpNode(operator="not", operand=p[2])
+
+
+def p_expr_isvoid(p):
+    """expr : ISVOID expr"""
+    p[0] = UnaryOpNode(operator="isvoid", operand=p[2])
+
+
+def p_expr_unary_neg(p):
+    """expr : '~' expr %prec UNARY_NEG"""
+    p[0] = UnaryOpNode(operator="~", operand=p[2])
+
+
+def p_expr_group(p):
+    """expr : '(' expr ')'"""
+    p[0] = p[2]
 
 
 def p_expr_int(p):

@@ -46,3 +46,22 @@ class LiteralNode:
 @dataclass
 class VariableNode:
     name: str
+
+
+@dataclass
+class AssignNode:
+    name: str
+    value: Any
+
+
+@dataclass
+class BinaryOpNode:
+    operator: str
+    left: Any
+    right: Any
+
+
+@dataclass
+class UnaryOpNode:
+    operator: str
+    operand: Any
