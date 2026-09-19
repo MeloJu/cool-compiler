@@ -8,13 +8,20 @@ from ast_nodes import (
     AssignNode,
     AttributeNode,
     BinaryOpNode,
+    BlockNode,
     ClassNode,
     FormalNode,
+    IfNode,
+    LetBindingNode,
+    LetNode,
     LiteralNode,
+    MethodCallNode,
     MethodNode,
+    NewNode,
     ProgramNode,
     UnaryOpNode,
     VariableNode,
+    WhileNode,
 )
 from parser import parse
 
@@ -168,6 +175,112 @@ class TestParserInicial(unittest.TestCase):
                         operand=VariableNode(name="x"),
                     ),
                 ),
+            ),
+        )
+
+    def test_if_then_else(self):
+        ast = parse("class Main { escolha() : Int { if ok then 1 else 2 fi }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            IfNode(
+                condition=VariableNode(name="ok"),
+                then_expr=LiteralNode(value=1, type_name="Int"),
+                else_expr=LiteralNode(value=2, type_name="Int"),
+            ),
+        )
+
+    def test_while_loop(self):
+        ast = parse("class Main { repete() : Object { while ok loop x <- x + 1 pool }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            WhileNode(
+                condition=VariableNode(name="ok"),
+                body=AssignNode(
+                    name="x",
+                    value=BinaryOpNode(
+                        operator="+",
+                        left=VariableNode(name="x"),
+                        right=LiteralNode(value=1, type_name="Int"),
+                    ),
+                ),
+            ),
+        )
+
+    def test_bloco_de_expressoes(self):
+        ast = parse("class Main { bloco() : Int { { x <- 1; x + 2; } }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            BlockNode(
+                expressions=[
+                    AssignNode(name="x", value=LiteralNode(value=1, type_name="Int")),
+                    BinaryOpNode(
+                        operator="+",
+                        left=VariableNode(name="x"),
+                        right=LiteralNode(value=2, type_name="Int"),
+                    ),
+                ]
+            ),
+        )
+
+    def test_let_com_multiplas_ligacoes(self):
+        ast = parse("class Main { teste() : Int { let x : Int <- 1, y : Int in x + y }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            LetNode(
+                bindings=[
+                    LetBindingNode(
+                        name="x",
+                        type_name="Int",
+                        init=LiteralNode(value=1, type_name="Int"),
+                    ),
+                    LetBindingNode(name="y", type_name="Int"),
+                ],
+                body=BinaryOpNode(
+                    operator="+",
+                    left=VariableNode(name="x"),
+                    right=VariableNode(name="y"),
+                ),
+            ),
+        )
+
+    def test_new(self):
+        ast = parse("class Main { cria() : Main { new Main }; };")
+        self.assertEqual(ast.classes[0].features[0].body, NewNode(type_name="Main"))
+
+    def test_chamada_de_metodo_implicita(self):
+        ast = parse("class Main { chama() : Object { f(1, x) }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            MethodCallNode(
+                receiver=None,
+                method="f",
+                args=[
+                    LiteralNode(value=1, type_name="Int"),
+                    VariableNode(name="x"),
+                ],
+            ),
+        )
+
+    def test_chamada_de_metodo_com_receptor(self):
+        ast = parse("class Main { chama() : Object { obj.f(1) }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            MethodCallNode(
+                receiver=VariableNode(name="obj"),
+                method="f",
+                args=[LiteralNode(value=1, type_name="Int")],
+            ),
+        )
+
+    def test_chamada_de_metodo_com_tipo_estatico(self):
+        ast = parse("class Main { chama() : Object { obj@IO.out_string(\"oi\") }; };")
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            MethodCallNode(
+                receiver=VariableNode(name="obj"),
+                method="out_string",
+                args=[LiteralNode(value="oi", type_name="String")],
+                static_type="IO",
             ),
         )
 

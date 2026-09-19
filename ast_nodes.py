@@ -65,3 +65,47 @@ class BinaryOpNode:
 class UnaryOpNode:
     operator: str
     operand: Any
+
+
+@dataclass
+class IfNode:
+    condition: Any
+    then_expr: Any
+    else_expr: Any
+
+
+@dataclass
+class WhileNode:
+    condition: Any
+    body: Any
+
+
+@dataclass
+class BlockNode:
+    expressions: list[Any]
+
+
+@dataclass
+class LetBindingNode:
+    name: str
+    type_name: str
+    init: Any = None
+
+
+@dataclass
+class LetNode:
+    bindings: list[LetBindingNode]
+    body: Any
+
+
+@dataclass
+class NewNode:
+    type_name: str
+
+
+@dataclass
+class MethodCallNode:
+    receiver: Any
+    method: str
+    args: list[Any] = field(default_factory=list)
+    static_type: str | None = None

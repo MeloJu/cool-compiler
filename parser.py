@@ -4,13 +4,20 @@ from ast_nodes import (
     AssignNode,
     AttributeNode,
     BinaryOpNode,
+    BlockNode,
     ClassNode,
     FormalNode,
+    IfNode,
+    LetBindingNode,
+    LetNode,
     LiteralNode,
+    MethodCallNode,
     MethodNode,
+    NewNode,
     ProgramNode,
     UnaryOpNode,
     VariableNode,
+    WhileNode,
 )
 from lexer import build_lexer, tokens
 
@@ -23,6 +30,7 @@ precedence = (
     ("left", "*", "/"),
     ("right", "ISVOID"),
     ("right", "UNARY_NEG"),
+    ("left", "DISPATCH"),
 )
 
 
@@ -130,6 +138,96 @@ def p_expr_unary_neg(p):
 def p_expr_group(p):
     """expr : '(' expr ')'"""
     p[0] = p[2]
+
+
+def p_expr_if(p):
+    """expr : IF expr THEN expr ELSE expr FI"""
+    p[0] = IfNode(condition=p[2], then_expr=p[4], else_expr=p[6])
+
+
+def p_expr_while(p):
+    """expr : WHILE expr LOOP expr POOL"""
+    p[0] = WhileNode(condition=p[2], body=p[4])
+
+
+def p_expr_block(p):
+    """expr : '{' block_expr_list '}'"""
+    p[0] = BlockNode(expressions=p[2])
+
+
+def p_block_expr_list_single(p):
+    """block_expr_list : expr ';'"""
+    p[0] = [p[1]]
+
+
+def p_block_expr_list_many(p):
+    """block_expr_list : block_expr_list expr ';'"""
+    p[0] = p[1] + [p[2]]
+
+
+def p_expr_let(p):
+    """expr : LET let_binding_list IN expr"""
+    p[0] = LetNode(bindings=p[2], body=p[4])
+
+
+def p_let_binding_list_single(p):
+    """let_binding_list : let_binding"""
+    p[0] = [p[1]]
+
+
+def p_let_binding_list_many(p):
+    """let_binding_list : let_binding_list ',' let_binding"""
+    p[0] = p[1] + [p[3]]
+
+
+def p_let_binding(p):
+    """let_binding : OBJECTID ':' TYPEID"""
+    p[0] = LetBindingNode(name=p[1], type_name=p[3])
+
+
+def p_let_binding_init(p):
+    """let_binding : OBJECTID ':' TYPEID ASSIGN expr"""
+    p[0] = LetBindingNode(name=p[1], type_name=p[3], init=p[5])
+
+
+def p_expr_new(p):
+    """expr : NEW TYPEID"""
+    p[0] = NewNode(type_name=p[2])
+
+
+def p_expr_implicit_call(p):
+    """expr : OBJECTID '(' arg_list ')' %prec DISPATCH"""
+    p[0] = MethodCallNode(receiver=None, method=p[1], args=p[3])
+
+
+def p_expr_dispatch(p):
+    """expr : expr '.' OBJECTID '(' arg_list ')' %prec DISPATCH"""
+    p[0] = MethodCallNode(receiver=p[1], method=p[3], args=p[5])
+
+
+def p_expr_static_dispatch(p):
+    """expr : expr '@' TYPEID '.' OBJECTID '(' arg_list ')' %prec DISPATCH"""
+    p[0] = MethodCallNode(receiver=p[1], method=p[5], args=p[7], static_type=p[3])
+
+
+def p_arg_list_empty(p):
+    """arg_list : empty"""
+    p[0] = []
+
+
+def p_arg_list_values(p):
+    """arg_list : arg_expr_list"""
+    p[0] = p[1]
+
+
+def p_arg_expr_list_single(p):
+    """arg_expr_list : expr"""
+    p[0] = [p[1]]
+
+
+def p_arg_expr_list_many(p):
+    """arg_expr_list : arg_expr_list ',' expr"""
+    p[0] = p[1] + [p[3]]
 
 
 def p_expr_int(p):
