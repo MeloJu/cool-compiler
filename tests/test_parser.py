@@ -4,7 +4,16 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import parse, ProgramNode, ClassNode
+from parser import (
+    parse,
+    AttributeNode,
+    ClassNode,
+    FormalNode,
+    LiteralNode,
+    MethodNode,
+    ProgramNode,
+    VariableNode,
+)
 
 
 class TestParserInicial(unittest.TestCase):
@@ -32,6 +41,59 @@ class TestParserInicial(unittest.TestCase):
                     ClassNode(name="A", parent="Object"),
                     ClassNode(name="B", parent="A"),
                 ]
+            ),
+        )
+
+    def test_atributo_simples(self):
+        ast = parse("class Main { x : Int; };")
+        self.assertEqual(
+            ast,
+            ProgramNode(
+                classes=[
+                    ClassNode(
+                        name="Main",
+                        parent="Object",
+                        features=[AttributeNode(name="x", type_name="Int")],
+                    )
+                ]
+            ),
+        )
+
+    def test_atributo_com_inicializacao(self):
+        ast = parse("class Main { msg : String <- \"oi\"; };")
+        self.assertEqual(
+            ast.classes[0].features[0],
+            AttributeNode(
+                name="msg",
+                type_name="String",
+                init=LiteralNode(value="oi", type_name="String"),
+            ),
+        )
+
+    def test_metodo_sem_parametros(self):
+        ast = parse("class Main { main() : Object { self }; };")
+        self.assertEqual(
+            ast.classes[0].features[0],
+            MethodNode(
+                name="main",
+                params=[],
+                return_type="Object",
+                body=VariableNode(name="self"),
+            ),
+        )
+
+    def test_metodo_com_parametros(self):
+        ast = parse("class Main { soma(a : Int, b : Int) : Int { a }; };")
+        self.assertEqual(
+            ast.classes[0].features[0],
+            MethodNode(
+                name="soma",
+                params=[
+                    FormalNode(name="a", type_name="Int"),
+                    FormalNode(name="b", type_name="Int"),
+                ],
+                return_type="Int",
+                body=VariableNode(name="a"),
             ),
         )
 
