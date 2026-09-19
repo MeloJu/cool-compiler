@@ -9,6 +9,8 @@ from ast_nodes import (
     AttributeNode,
     BinaryOpNode,
     BlockNode,
+    CaseBranchNode,
+    CaseNode,
     ClassNode,
     FormalNode,
     IfNode,
@@ -284,6 +286,41 @@ class TestParserInicial(unittest.TestCase):
             ),
         )
 
+    def test_case_com_multiplos_ramos(self):
+        source = """
+        class Main {
+            escolhe() : Int {
+                case valor of
+                    x : Int => x + 1;
+                    y : String => 0;
+                esac
+            };
+        };
+        """
+        ast = parse(source)
+        self.assertEqual(
+            ast.classes[0].features[0].body,
+            CaseNode(
+                expression=VariableNode(name="valor"),
+                branches=[
+                    CaseBranchNode(
+                        name="x",
+                        type_name="Int",
+                        body=BinaryOpNode(
+                            operator="+",
+                            left=VariableNode(name="x"),
+                            right=LiteralNode(value=1, type_name="Int"),
+                        ),
+                    ),
+                    CaseBranchNode(
+                        name="y",
+                        type_name="String",
+                        body=LiteralNode(value=0, type_name="Int"),
+                    ),
+                ],
+            ),
+        )
+
     def test_rejeita_ponto_virgula_faltando(self):
         with self.assertRaises(SyntaxError):
             parse("class Main {\n}")
@@ -291,6 +328,22 @@ class TestParserInicial(unittest.TestCase):
     def test_rejeita_erro_lexico(self):
         with self.assertRaises(SyntaxError):
             parse("class Main { $ };")
+
+    def test_rejeita_if_sem_fi(self):
+        with self.assertRaisesRegex(SyntaxError, "token inesperado"):
+            parse("class Main { erro() : Int { if ok then 1 else 2 }; };")
+
+    def test_rejeita_let_sem_in(self):
+        with self.assertRaisesRegex(SyntaxError, "token inesperado"):
+            parse("class Main { erro() : Int { let x : Int <- 1 x + 1 }; };")
+
+    def test_rejeita_case_sem_esac(self):
+        with self.assertRaisesRegex(SyntaxError, "token inesperado"):
+            parse("class Main { erro() : Int { case x of y : Int => y; }; };")
+
+    def test_rejeita_chamada_com_virgula_inicial(self):
+        with self.assertRaisesRegex(SyntaxError, "token inesperado"):
+            parse("class Main { erro() : Object { f(,x) }; };")
 
 
 if __name__ == "__main__":

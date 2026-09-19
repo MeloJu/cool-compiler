@@ -109,3 +109,16 @@ class MethodCallNode:
     method: str
     args: list[Any] = field(default_factory=list)
     static_type: str | None = None
+
+
+@dataclass
+class CaseBranchNode:
+    name: str
+    type_name: str
+    body: Any
+
+
+@dataclass
+class CaseNode:
+    expression: Any
+    branches: list[CaseBranchNode]

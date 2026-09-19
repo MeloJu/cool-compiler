@@ -5,6 +5,8 @@ from ast_nodes import (
     AttributeNode,
     BinaryOpNode,
     BlockNode,
+    CaseBranchNode,
+    CaseNode,
     ClassNode,
     FormalNode,
     IfNode,
@@ -148,6 +150,26 @@ def p_expr_if(p):
 def p_expr_while(p):
     """expr : WHILE expr LOOP expr POOL"""
     p[0] = WhileNode(condition=p[2], body=p[4])
+
+
+def p_expr_case(p):
+    """expr : CASE expr OF case_branch_list ESAC"""
+    p[0] = CaseNode(expression=p[2], branches=p[4])
+
+
+def p_case_branch_list_single(p):
+    """case_branch_list : case_branch"""
+    p[0] = [p[1]]
+
+
+def p_case_branch_list_many(p):
+    """case_branch_list : case_branch_list case_branch"""
+    p[0] = p[1] + [p[2]]
+
+
+def p_case_branch(p):
+    """case_branch : OBJECTID ':' TYPEID DARROW expr ';'"""
+    p[0] = CaseBranchNode(name=p[1], type_name=p[3], body=p[5])
 
 
 def p_expr_block(p):
