@@ -1,56 +1,15 @@
-# A integração entre o analisador léxico e o analisador sintático foi feita.
-# O lexer agora expõe uma função que cria uma instância limpa para o parser consumir. 
-# O parser foi criado com ply.yacc.
-
-from dataclasses import dataclass, field
-
 import ply.yacc as yacc
 
+from ast_nodes import (
+    AttributeNode,
+    ClassNode,
+    FormalNode,
+    LiteralNode,
+    MethodNode,
+    ProgramNode,
+    VariableNode,
+)
 from lexer import build_lexer, tokens
-
-
-@dataclass
-class ClassNode:
-    name: str
-    parent: str = "Object"
-    features: list = field(default_factory=list)
-
-
-@dataclass
-class ProgramNode:
-    classes: list[ClassNode]
-
-
-@dataclass
-class FormalNode:
-    name: str
-    type_name: str
-
-
-@dataclass
-class AttributeNode:
-    name: str
-    type_name: str
-    init: object = None
-
-
-@dataclass
-class MethodNode:
-    name: str
-    params: list[FormalNode]
-    return_type: str
-    body: object
-
-
-@dataclass
-class LiteralNode:
-    value: object
-    type_name: str
-
-
-@dataclass
-class VariableNode:
-    name: str
 
 
 def p_program(p):

@@ -4,8 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from parser import (
-    parse,
+from ast_nodes import (
     AttributeNode,
     ClassNode,
     FormalNode,
@@ -14,6 +13,7 @@ from parser import (
     ProgramNode,
     VariableNode,
 )
+from parser import parse
 
 
 class TestParserInicial(unittest.TestCase):
