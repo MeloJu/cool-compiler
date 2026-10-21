@@ -14,7 +14,7 @@ Requer Python 3 e a dependência `ply` (única dependência do projeto).
 
 ```bash
 pip install -r requirements.txt
-python main.py examples/hello_world.cl
+python main.py lex examples/hello_world.cl
 ```
 
 Saída (formato `#linha TOKEN valor`):
@@ -45,7 +45,10 @@ Saída (formato `#linha TOKEN valor`):
 
 ```
 lexer.py            # regras de tokens do PLY + wrapper tokenize(source)
-main.py              # CLI: le um arquivo .cl e imprime os tokens
+parser.py            # regras sintaticas e construcao da AST
+semantic.py          # regras da analise semantica
+main.py              # CLI: modos lex, parse e semantic
+READMESEMANTICO.md   # explicacao da etapa semantica
 requirements.txt     # dependência única: ply
 examples/            # programas COOL de exemplo
   hello_world.cl
@@ -117,6 +120,14 @@ python main.py examples/erros.cl
 
 ```bash
 python -m unittest discover -s tests -v
+```
+
+## Modos da linha de comando
+
+```bash
+python main.py lex examples/hello_world.cl
+python main.py parse examples/hello_world.cl
+python main.py semantic examples/hello_world.cl
 ```
 
 ## Próximas etapas

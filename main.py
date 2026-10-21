@@ -5,11 +5,13 @@ CLI dos analisadores de COOL.
 Uso:
     python main.py lex caminho/arquivo.cl
     python main.py parse caminho/arquivo.cl
+    python main.py semantic caminho/arquivo.cl
 """
 import sys
 
 from lexer import tokenize
 from parser import parse
+from semantic import analyze
 
 
 def _read_source(path: str) -> str:
@@ -18,7 +20,7 @@ def _read_source(path: str) -> str:
 
 
 def _print_usage() -> None:
-    print("uso: python main.py <lex|parse> <arquivo.cl>")
+    print("uso: python main.py <lex|parse|semantic> <arquivo.cl>")
 
 
 def main() -> None:
@@ -40,6 +42,19 @@ def main() -> None:
             print(exc)
             sys.exit(1)
         print("Analise sintatica concluida com sucesso.")
+    elif mode == "semantic":
+        try:
+            program = parse(source)
+        except SyntaxError as exc:
+            print(exc)
+            sys.exit(1)
+
+        result = analyze(program)
+        if not result.success:
+            for error in result.errors:
+                print(f"Erro semantico: {error.message}")
+            sys.exit(1)
+        print("Analise semantica concluida com sucesso.")
     else:
         _print_usage()
         sys.exit(1)
