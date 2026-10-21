@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ast_nodes import ProgramNode
 from parser import parse
-from semantic import SemanticResult, analyze, builtin_class_table
+from semantic import Scope, SemanticResult, analyze, builtin_class_table
 
 
 class TestSemanticBase(unittest.TestCase):
@@ -78,6 +78,62 @@ class TestSemanticBase(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertTrue(any("Ciclo de heranca" in error.message for error in result.errors))
+
+    def test_escopo_consulta_pai_quando_nome_nao_e_local(self):
+        outer_scope = Scope(symbols={"x": "Int"})
+        inner_scope = Scope(parent=outer_scope, symbols={"y": "String"})
+
+        self.assertEqual(inner_scope.lookup("x"), "Int")
+        self.assertEqual(inner_scope.lookup("y"), "String")
+        self.assertIsNone(inner_scope.lookup("z"))
+
+    def test_registra_atributos_e_metodos_da_classe(self):
+        result = analyze(
+            parse("class Main { valor : Int; dobro(x : Int) : Int { x + x }; };")
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.class_table["Main"].attributes["valor"].type_name, "Int")
+        self.assertEqual(
+            result.class_table["Main"].methods["dobro"].parameter_types,
+            ("Int",),
+        )
+
+    def test_rejeita_tipo_de_atributo_inexistente(self):
+        result = analyze(parse("class Main { valor : Ausente; };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("tipo inexistente 'Ausente'", result.errors[0].message)
+
+    def test_rejeita_atributo_com_nome_self(self):
+        result = analyze(parse("class Main { self : Int; };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("atributo nao pode receber o nome 'self'", result.errors[0].message)
+
+    def test_rejeita_parametro_duplicado(self):
+        result = analyze(parse("class Main { f(x : Int, x : Int) : Int { x }; };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("parametro duplicado 'x'", result.errors[0].message)
+
+    def test_rejeita_atributo_que_redefine_atributo_herdado(self):
+        result = analyze(parse("class A { x : Int; }; class B inherits A { x : Int; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("redefine um atributo herdado" in error.message for error in result.errors))
+
+    def test_rejeita_sobrescrita_de_metodo_com_assinatura_diferente(self):
+        source = """
+        class A { f(x : Int) : Int { x }; };
+        class B inherits A { f(x : String) : Int { 0 }; };
+        """
+        result = analyze(parse(source))
+
+        self.assertFalse(result.success)
+        self.assertTrue(
+            any("assinatura diferente da versao herdada" in error.message for error in result.errors)
+        )
 
 
 if __name__ == "__main__":
