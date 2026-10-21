@@ -42,6 +42,43 @@ class TestSemanticBase(unittest.TestCase):
             "Int",
         )
 
+    def test_registra_classes_do_programa_na_tabela(self):
+        result = analyze(parse("class A { }; class Main inherits A { };"))
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.class_table["A"].parent, "Object")
+        self.assertEqual(result.class_table["Main"].parent, "A")
+
+    def test_rejeita_redefinicao_de_classe_nativa(self):
+        result = analyze(parse("class Object { };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("Classe 'Object' foi definida mais de uma vez", result.errors[0].message)
+
+    def test_rejeita_classes_com_mesmo_nome(self):
+        result = analyze(parse("class A { }; class A { };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("Classe 'A' foi definida mais de uma vez", result.errors[0].message)
+
+    def test_rejeita_classe_pai_inexistente(self):
+        result = analyze(parse("class Main inherits Desconhecida { };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("herda de classe inexistente 'Desconhecida'", result.errors[0].message)
+
+    def test_rejeita_heranca_de_tipo_basico(self):
+        result = analyze(parse("class Main inherits Int { };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("nao pode herdar de 'Int'", result.errors[0].message)
+
+    def test_rejeita_ciclo_de_heranca(self):
+        result = analyze(parse("class A inherits B { }; class B inherits A { };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("Ciclo de heranca" in error.message for error in result.errors))
+
 
 if __name__ == "__main__":
     unittest.main()

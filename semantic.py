@@ -69,6 +69,60 @@ def builtin_class_table() -> dict[str, ClassInfo]:
     }
 
 
+def _register_program_classes(program: ProgramNode, result: "SemanticResult") -> None:
+    """Inclui as classes da AST na tabela, sem substituir tipos nativos."""
+    for class_node in program.classes:
+        if class_node.name in result.class_table:
+            result.errors.append(
+                SemanticError(f"Classe '{class_node.name}' foi definida mais de uma vez")
+            )
+            continue
+
+        result.class_table[class_node.name] = ClassInfo(
+            name=class_node.name,
+            parent=class_node.parent,
+        )
+
+
+def _validate_inheritance(program: ProgramNode, result: "SemanticResult") -> None:
+    """Verifica a existencia, as restricoes e os ciclos da hierarquia."""
+    forbidden_parents = {"Int", "Bool", "String"}
+    class_names = {class_node.name for class_node in program.classes}
+
+    for class_node in program.classes:
+        if class_node.name not in result.class_table:
+            continue
+
+        parent = class_node.parent
+        if parent not in result.class_table:
+            result.errors.append(
+                SemanticError(
+                    f"Classe '{class_node.name}' herda de classe inexistente '{parent}'"
+                )
+            )
+        elif parent in forbidden_parents:
+            result.errors.append(
+                SemanticError(
+                    f"Classe '{class_node.name}' nao pode herdar de '{parent}'"
+                )
+            )
+
+    for class_name in class_names:
+        visited: set[str] = set()
+        current = class_name
+        while current in class_names:
+            if current in visited:
+                result.errors.append(
+                    SemanticError(f"Ciclo de heranca detectado na classe '{class_name}'")
+                )
+                break
+            visited.add(current)
+            parent = result.class_table[current].parent
+            if parent not in result.class_table:
+                break
+            current = parent
+
+
 @dataclass
 class SemanticResult:
     """Resultado da analise semantica de um programa."""
@@ -92,4 +146,7 @@ def analyze(program: ProgramNode) -> SemanticResult:
     if not isinstance(program, ProgramNode):
         raise TypeError("A analise semantica espera um ProgramNode")
 
-    return SemanticResult()
+    result = SemanticResult()
+    _register_program_classes(program, result)
+    _validate_inheritance(program, result)
+    return result
