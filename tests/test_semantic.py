@@ -50,7 +50,9 @@ class TestSemanticBase(unittest.TestCase):
         )
 
     def test_registra_classes_do_programa_na_tabela(self):
-        result = analyze(parse("class A { }; class Main inherits A { };"))
+        result = analyze(
+            parse("class A { }; class Main inherits A { main() : Object { self }; };")
+        )
 
         self.assertTrue(result.success)
         self.assertEqual(result.class_table["A"].parent, "Object")
@@ -96,7 +98,10 @@ class TestSemanticBase(unittest.TestCase):
 
     def test_registra_atributos_e_metodos_da_classe(self):
         result = analyze(
-            parse("class Main { valor : Int; dobro(x : Int) : Int { x + x }; };")
+            parse(
+                "class Main { valor : Int; dobro(x : Int) : Int { x + x }; "
+                "main() : Object { self }; };"
+            )
         )
 
         self.assertTrue(result.success)
@@ -173,7 +178,9 @@ class TestSemanticBase(unittest.TestCase):
         )
 
     def test_infere_tipos_de_literais_e_operadores(self):
-        program = parse("class Main { soma() : Int { 1 + 2 * 3 }; };")
+        program = parse(
+            "class Main { soma() : Int { 1 + 2 * 3 }; main() : Object { self }; };"
+        )
         expression = program.classes[0].features[0].body
 
         result = analyze(program)
@@ -207,7 +214,10 @@ class TestSemanticBase(unittest.TestCase):
         self.assertTrue(any("declara retorno 'Int'" in error.message for error in result.errors))
 
     def test_infere_tipo_de_if_pela_uniao_dos_ramos(self):
-        program = parse("class Main { f() : Object { if true then 1 else \"x\" fi }; };")
+        program = parse(
+            "class Main { f() : Object { if true then 1 else \"x\" fi }; "
+            "main() : Object { self }; };"
+        )
         expression = program.classes[0].features[0].body
 
         result = analyze(program)
@@ -229,7 +239,10 @@ class TestSemanticBase(unittest.TestCase):
 
     def test_valida_chamada_implicita_de_metodo_nativo(self):
         result = analyze(
-            parse("class Main inherits IO { f() : SELF_TYPE { out_int(1) }; };")
+            parse(
+                "class Main inherits IO { f() : SELF_TYPE { out_int(1) }; "
+                "main() : Object { self }; };"
+            )
         )
 
         self.assertTrue(result.success)
@@ -257,6 +270,32 @@ class TestSemanticBase(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertTrue(any("aparece mais de uma vez no case" in error.message for error in result.errors))
+
+    def test_rejeita_programa_sem_classe_main(self):
+        result = analyze(parse("class Auxiliar { };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("classe 'Main'" in error.message for error in result.errors))
+
+    def test_rejeita_main_sem_metodo_main(self):
+        result = analyze(parse("class Main { };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("metodo 'main'" in error.message for error in result.errors))
+
+    def test_rejeita_metodo_main_com_parametros(self):
+        result = analyze(parse("class Main { main(x : Int) : Object { self }; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("nao pode receber parametros" in error.message for error in result.errors))
+
+    def test_rejeita_self_type_como_nome_de_classe(self):
+        result = analyze(
+            parse("class SELF_TYPE { }; class Main { main() : Object { self }; };")
+        )
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("nao pode ser usado como nome de classe" in error.message for error in result.errors))
 
 
 if __name__ == "__main__":

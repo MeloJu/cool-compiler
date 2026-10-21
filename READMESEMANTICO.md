@@ -8,6 +8,8 @@ COOL.
 
 - classes duplicadas, tipos nativos redefinidos, pais inexistentes e ciclos de
   heranca;
+- presenca da classe `Main` e do metodo local `main()` sem parametros;
+- proibicao de declarar uma classe chamada `SELF_TYPE`;
 - proibicao de herdar de `Int`, `Bool` e `String`;
 - declaracoes de atributos, metodos e parametros;
 - tipos declarados, atributos herdados e sobrescrita de metodos;

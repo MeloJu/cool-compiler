@@ -130,6 +130,9 @@ python main.py parse examples/hello_world.cl
 python main.py semantic examples/hello_world.cl
 ```
 
+O modo `semantic` exige um programa COOL completo: uma classe `Main` com o
+metodo local `main()` sem parametros.
+
 ## Próximas etapas
 
 Análise sintática (parser), análise semântica e geração de código,

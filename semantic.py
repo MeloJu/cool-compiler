@@ -123,6 +123,11 @@ def _register_program_classes(
     """Inclui as classes da AST na tabela, sem substituir tipos nativos."""
     registered_classes: list[ClassNode] = []
     for class_node in program.classes:
+        if class_node.name == "SELF_TYPE":
+            result.errors.append(
+                SemanticError("'SELF_TYPE' nao pode ser usado como nome de classe")
+            )
+            continue
         if class_node.name in result.class_table:
             result.errors.append(
                 SemanticError(f"Classe '{class_node.name}' foi definida mais de uma vez")
@@ -370,6 +375,25 @@ def _validate_inherited_features(
                         "tem assinatura diferente da versao herdada"
                     )
                 )
+
+
+def _validate_entry_point(result: "SemanticResult") -> None:
+    """Garante que o programa possua o ponto de entrada exigido por COOL."""
+    main_class = result.class_table.get("Main")
+    if main_class is None:
+        result.errors.append(SemanticError("A classe 'Main' nao foi definida"))
+        return
+
+    main_method = main_class.methods.get("main")
+    if main_method is None:
+        result.errors.append(
+            SemanticError("O metodo 'main' nao foi definido na classe 'Main'")
+        )
+        return
+    if main_method.parameter_types:
+        result.errors.append(
+            SemanticError("O metodo 'Main.main' nao pode receber parametros")
+        )
 
 
 def _record_expression_type(
@@ -776,4 +800,5 @@ def analyze(program: ProgramNode) -> SemanticResult:
     _register_features(classes, result)
     _validate_inherited_features(classes, result)
     _validate_basic_expression_types(classes, result)
+    _validate_entry_point(result)
     return result
