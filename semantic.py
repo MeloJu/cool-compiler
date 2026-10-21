@@ -6,7 +6,17 @@ escopos e tipos serao adicionadas nos proximos commits.
 
 from dataclasses import dataclass, field
 
-from ast_nodes import AttributeNode, ClassNode, MethodNode, ProgramNode
+from ast_nodes import (
+    AssignNode,
+    AttributeNode,
+    BinaryOpNode,
+    ClassNode,
+    LiteralNode,
+    MethodNode,
+    ProgramNode,
+    UnaryOpNode,
+    VariableNode,
+)
 
 
 @dataclass(frozen=True)
@@ -355,12 +365,180 @@ def _validate_inherited_features(
                 )
 
 
+def _record_expression_type(
+    expression: object, type_name: str, result: "SemanticResult"
+) -> str:
+    result.expression_types[id(expression)] = type_name
+    return type_name
+
+
+def _class_scope(class_name: str, result: "SemanticResult") -> Scope:
+    """Cria o escopo de um metodo, com atributos herdados e ``self``."""
+    attribute_sets: list[dict[str, AttributeInfo]] = []
+    current_name: str | None = class_name
+    visited: set[str] = set()
+    while current_name is not None and current_name not in visited:
+        visited.add(current_name)
+        class_info = result.class_table.get(current_name)
+        if class_info is None:
+            break
+        attribute_sets.append(class_info.attributes)
+        current_name = class_info.parent
+
+    scope = Scope(symbols={"self": "SELF_TYPE"})
+    for attributes in reversed(attribute_sets):
+        for attribute_name, attribute_info in attributes.items():
+            scope.symbols[attribute_name] = attribute_info.type_name
+    return scope
+
+
+def _infer_expression_type(
+    expression: object,
+    current_class: str,
+    scope: Scope,
+    result: "SemanticResult",
+) -> str | None:
+    """Infere o tipo das expressoes basicas suportadas nesta etapa."""
+    if isinstance(expression, LiteralNode):
+        return _record_expression_type(expression, expression.type_name, result)
+
+    if isinstance(expression, VariableNode):
+        variable_type = scope.lookup(expression.name)
+        if variable_type is None:
+            result.errors.append(
+                SemanticError(f"Identificador '{expression.name}' nao foi declarado")
+            )
+            return None
+        return _record_expression_type(expression, variable_type, result)
+
+    if isinstance(expression, AssignNode):
+        value_type = _infer_expression_type(
+            expression.value, current_class, scope, result
+        )
+        if expression.name == "self":
+            result.errors.append(SemanticError("Nao e permitido atribuir um valor a 'self'"))
+            return value_type
+        variable_type = scope.lookup(expression.name)
+        if variable_type is None:
+            result.errors.append(
+                SemanticError(f"Identificador '{expression.name}' nao foi declarado")
+            )
+            return value_type
+        if value_type is not None and not conforms(
+            value_type, variable_type, current_class, result.class_table
+        ):
+            result.errors.append(
+                SemanticError(
+                    f"Atribuicao a '{expression.name}' espera '{variable_type}', "
+                    f"mas recebeu '{value_type}'"
+                )
+            )
+        if value_type is None:
+            return None
+        return _record_expression_type(expression, value_type, result)
+
+    if isinstance(expression, BinaryOpNode):
+        left_type = _infer_expression_type(expression.left, current_class, scope, result)
+        right_type = _infer_expression_type(
+            expression.right, current_class, scope, result
+        )
+        if left_type is None or right_type is None:
+            return None
+        if expression.operator in {"+", "-", "*", "/"}:
+            if left_type != "Int" or right_type != "Int":
+                result.errors.append(
+                    SemanticError(
+                        f"Operador '{expression.operator}' exige dois operandos Int"
+                    )
+                )
+                return None
+            return _record_expression_type(expression, "Int", result)
+        if expression.operator in {"<", "<="}:
+            if left_type != "Int" or right_type != "Int":
+                result.errors.append(
+                    SemanticError(
+                        f"Operador '{expression.operator}' exige dois operandos Int"
+                    )
+                )
+                return None
+            return _record_expression_type(expression, "Bool", result)
+        if expression.operator == "=":
+            basic_types = {"Int", "Bool", "String"}
+            if (left_type in basic_types or right_type in basic_types) and left_type != right_type:
+                result.errors.append(
+                    SemanticError("Comparacao '=' entre tipos basicos exige tipos iguais")
+                )
+                return None
+            return _record_expression_type(expression, "Bool", result)
+
+    if isinstance(expression, UnaryOpNode):
+        operand_type = _infer_expression_type(
+            expression.operand, current_class, scope, result
+        )
+        if operand_type is None:
+            return None
+        required_type = {"~": "Int", "not": "Bool"}.get(expression.operator)
+        if required_type is not None and operand_type != required_type:
+            result.errors.append(
+                SemanticError(
+                    f"Operador '{expression.operator}' exige operando do tipo "
+                    f"'{required_type}'"
+                )
+            )
+            return None
+        if expression.operator == "isvoid":
+            return _record_expression_type(expression, "Bool", result)
+        if required_type is not None:
+            return _record_expression_type(expression, required_type, result)
+
+    return None
+
+
+def _validate_basic_expression_types(
+    classes: list[ClassNode], result: "SemanticResult"
+) -> None:
+    """Verifica inicializacoes e corpos de metodos com expressoes basicas."""
+    for class_node in classes:
+        for feature in class_node.features:
+            class_scope = _class_scope(class_node.name, result)
+            if isinstance(feature, AttributeNode) and feature.init is not None:
+                init_type = _infer_expression_type(
+                    feature.init, class_node.name, class_scope, result
+                )
+                if init_type is not None and not conforms(
+                    init_type, feature.type_name, class_node.name, result.class_table
+                ):
+                    result.errors.append(
+                        SemanticError(
+                            f"Inicializacao do atributo '{feature.name}' espera "
+                            f"'{feature.type_name}', mas recebeu '{init_type}'"
+                        )
+                    )
+            elif isinstance(feature, MethodNode):
+                method_scope = Scope(parent=class_scope)
+                for formal in feature.params:
+                    method_scope.define(formal.name, formal.type_name)
+                body_type = _infer_expression_type(
+                    feature.body, class_node.name, method_scope, result
+                )
+                if body_type is not None and not conforms(
+                    body_type, feature.return_type, class_node.name, result.class_table
+                ):
+                    result.errors.append(
+                        SemanticError(
+                            f"Metodo '{feature.name}' declara retorno '{feature.return_type}', "
+                            f"mas o corpo possui tipo '{body_type}'"
+                        )
+                    )
+
+
 @dataclass
 class SemanticResult:
     """Resultado da analise semantica de um programa."""
 
     errors: list[SemanticError] = field(default_factory=list)
     class_table: dict[str, ClassInfo] = field(default_factory=builtin_class_table)
+    expression_types: dict[int, str] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -383,4 +561,5 @@ def analyze(program: ProgramNode) -> SemanticResult:
     _validate_inheritance(classes, result)
     _register_features(classes, result)
     _validate_inherited_features(classes, result)
+    _validate_basic_expression_types(classes, result)
     return result

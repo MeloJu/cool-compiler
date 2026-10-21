@@ -172,6 +172,40 @@ class TestSemanticBase(unittest.TestCase):
             "SELF_TYPE",
         )
 
+    def test_infere_tipos_de_literais_e_operadores(self):
+        program = parse("class Main { soma() : Int { 1 + 2 * 3 }; };")
+        expression = program.classes[0].features[0].body
+
+        result = analyze(program)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.expression_types[id(expression)], "Int")
+
+    def test_rejeita_operacao_aritmetica_com_tipo_incorreto(self):
+        result = analyze(parse("class Main { soma() : Int { true + 1 }; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("exige dois operandos Int" in error.message for error in result.errors))
+
+    def test_rejeita_identificador_nao_declarado(self):
+        result = analyze(parse("class Main { f() : Object { ausente }; };"))
+
+        self.assertFalse(result.success)
+        self.assertIn("Identificador 'ausente' nao foi declarado", result.errors[0].message)
+
+    def test_rejeita_atribuicao_com_tipo_incompativel(self):
+        source = "class Main { valor : Int; define() : Bool { valor <- true }; };"
+        result = analyze(parse(source))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("espera 'Int', mas recebeu 'Bool'" in error.message for error in result.errors))
+
+    def test_rejeita_retorno_de_metodo_incompativel(self):
+        result = analyze(parse("class Main { f() : Int { true }; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("declara retorno 'Int'" in error.message for error in result.errors))
+
 
 if __name__ == "__main__":
     unittest.main()
