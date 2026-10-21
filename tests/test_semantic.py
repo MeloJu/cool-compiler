@@ -206,6 +206,58 @@ class TestSemanticBase(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertTrue(any("declara retorno 'Int'" in error.message for error in result.errors))
 
+    def test_infere_tipo_de_if_pela_uniao_dos_ramos(self):
+        program = parse("class Main { f() : Object { if true then 1 else \"x\" fi }; };")
+        expression = program.classes[0].features[0].body
+
+        result = analyze(program)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.expression_types[id(expression)], "Object")
+
+    def test_rejeita_condicao_de_if_que_nao_e_bool(self):
+        result = analyze(parse("class Main { f() : Int { if 1 then 1 else 2 fi }; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("Condicao de 'if'" in error.message for error in result.errors))
+
+    def test_rejeita_inicializacao_incompativel_no_let(self):
+        result = analyze(parse("class Main { f() : Int { let x : Int <- true in x }; };"))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("Inicializacao de 'x' no let" in error.message for error in result.errors))
+
+    def test_valida_chamada_implicita_de_metodo_nativo(self):
+        result = analyze(
+            parse("class Main inherits IO { f() : SELF_TYPE { out_int(1) }; };")
+        )
+
+        self.assertTrue(result.success)
+
+    def test_rejeita_argumento_incompativel_em_chamada_de_metodo(self):
+        result = analyze(
+            parse("class Main inherits IO { f() : SELF_TYPE { out_int(true) }; };")
+        )
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("Argumento de 'out_int'" in error.message for error in result.errors))
+
+    def test_rejeita_tipos_repetidos_em_ramos_de_case(self):
+        source = """
+        class Main {
+            f(x : Object) : Int {
+                case x of
+                    a : Int => 1;
+                    b : Int => 2;
+                esac
+            };
+        };
+        """
+        result = analyze(parse(source))
+
+        self.assertFalse(result.success)
+        self.assertTrue(any("aparece mais de uma vez no case" in error.message for error in result.errors))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,12 +10,19 @@ from ast_nodes import (
     AssignNode,
     AttributeNode,
     BinaryOpNode,
+    BlockNode,
+    CaseNode,
     ClassNode,
+    IfNode,
+    LetNode,
     LiteralNode,
+    MethodCallNode,
     MethodNode,
+    NewNode,
     ProgramNode,
     UnaryOpNode,
     VariableNode,
+    WhileNode,
 )
 
 
@@ -392,6 +399,21 @@ def _class_scope(class_name: str, result: "SemanticResult") -> Scope:
     return scope
 
 
+def _lookup_method(
+    type_name: str, method_name: str, current_class: str, result: "SemanticResult"
+) -> MethodSignature | None:
+    """Busca um metodo na classe informada e em seus ancestrais."""
+    current_name = current_class if type_name == "SELF_TYPE" else type_name
+    visited: set[str] = set()
+    while current_name in result.class_table and current_name not in visited:
+        visited.add(current_name)
+        class_info = result.class_table[current_name]
+        if method_name in class_info.methods:
+            return class_info.methods[method_name]
+        current_name = class_info.parent
+    return None
+
+
 def _infer_expression_type(
     expression: object,
     current_class: str,
@@ -490,6 +512,198 @@ def _infer_expression_type(
             return _record_expression_type(expression, "Bool", result)
         if required_type is not None:
             return _record_expression_type(expression, required_type, result)
+
+    if isinstance(expression, IfNode):
+        condition_type = _infer_expression_type(
+            expression.condition, current_class, scope, result
+        )
+        if condition_type is not None and condition_type != "Bool":
+            result.errors.append(SemanticError("Condicao de 'if' deve possuir tipo 'Bool'"))
+        then_type = _infer_expression_type(
+            expression.then_expr, current_class, scope, result
+        )
+        else_type = _infer_expression_type(
+            expression.else_expr, current_class, scope, result
+        )
+        if then_type is None or else_type is None:
+            return None
+        result_type = least_upper_bound(
+            then_type, else_type, current_class, result.class_table
+        )
+        if result_type is None:
+            return None
+        return _record_expression_type(expression, result_type, result)
+
+    if isinstance(expression, WhileNode):
+        condition_type = _infer_expression_type(
+            expression.condition, current_class, scope, result
+        )
+        if condition_type is not None and condition_type != "Bool":
+            result.errors.append(
+                SemanticError("Condicao de 'while' deve possuir tipo 'Bool'")
+            )
+        _infer_expression_type(expression.body, current_class, scope, result)
+        return _record_expression_type(expression, "Object", result)
+
+    if isinstance(expression, BlockNode):
+        block_type: str | None = None
+        for block_expression in expression.expressions:
+            block_type = _infer_expression_type(
+                block_expression, current_class, scope, result
+            )
+        if block_type is None:
+            return None
+        return _record_expression_type(expression, block_type, result)
+
+    if isinstance(expression, LetNode):
+        let_scope = Scope(parent=scope)
+        for binding in expression.bindings:
+            if binding.type_name == "SELF_TYPE" or not _type_exists(
+                binding.type_name, result
+            ):
+                result.errors.append(
+                    SemanticError(
+                        f"Ligacao '{binding.name}' do let usa tipo invalido "
+                        f"'{binding.type_name}'"
+                    )
+                )
+            if binding.init is not None:
+                init_type = _infer_expression_type(
+                    binding.init, current_class, let_scope, result
+                )
+                if init_type is not None and not conforms(
+                    init_type, binding.type_name, current_class, result.class_table
+                ):
+                    result.errors.append(
+                        SemanticError(
+                            f"Inicializacao de '{binding.name}' no let espera "
+                            f"'{binding.type_name}', mas recebeu '{init_type}'"
+                        )
+                    )
+            if binding.name == "self":
+                result.errors.append(SemanticError("Uma ligacao do let nao pode se chamar 'self'"))
+            else:
+                let_scope.define(binding.name, binding.type_name)
+        body_type = _infer_expression_type(expression.body, current_class, let_scope, result)
+        if body_type is None:
+            return None
+        return _record_expression_type(expression, body_type, result)
+
+    if isinstance(expression, NewNode):
+        if not _type_exists(expression.type_name, result):
+            result.errors.append(
+                SemanticError(f"Nao e possivel instanciar tipo inexistente '{expression.type_name}'")
+            )
+            return None
+        return _record_expression_type(expression, expression.type_name, result)
+
+    if isinstance(expression, MethodCallNode):
+        receiver_type = (
+            "SELF_TYPE"
+            if expression.receiver is None
+            else _infer_expression_type(expression.receiver, current_class, scope, result)
+        )
+        if receiver_type is None:
+            return None
+
+        dispatch_type = receiver_type
+        if expression.static_type is not None:
+            if expression.static_type == "SELF_TYPE" or not _type_exists(
+                expression.static_type, result
+            ):
+                result.errors.append(
+                    SemanticError(
+                        f"Despacho estatico usa tipo invalido '{expression.static_type}'"
+                    )
+                )
+                return None
+            if not conforms(
+                receiver_type, expression.static_type, current_class, result.class_table
+            ):
+                result.errors.append(
+                    SemanticError(
+                        f"Receptor do despacho estatico nao esta em conformidade com "
+                        f"'{expression.static_type}'"
+                    )
+                )
+                return None
+            dispatch_type = expression.static_type
+
+        argument_types = [
+            _infer_expression_type(argument, current_class, scope, result)
+            for argument in expression.args
+        ]
+        signature = _lookup_method(
+            dispatch_type, expression.method, current_class, result
+        )
+        if signature is None:
+            result.errors.append(
+                SemanticError(
+                    f"Metodo '{expression.method}' nao existe no tipo '{dispatch_type}'"
+                )
+            )
+            return None
+        if len(expression.args) != len(signature.parameter_types):
+            result.errors.append(
+                SemanticError(
+                    f"Metodo '{expression.method}' espera {len(signature.parameter_types)} "
+                    f"argumento(s), mas recebeu {len(expression.args)}"
+                )
+            )
+        for argument_type, parameter_type in zip(
+            argument_types, signature.parameter_types
+        ):
+            if argument_type is not None and not conforms(
+                argument_type, parameter_type, current_class, result.class_table
+            ):
+                result.errors.append(
+                    SemanticError(
+                        f"Argumento de '{expression.method}' espera '{parameter_type}', "
+                        f"mas recebeu '{argument_type}'"
+                    )
+                )
+        result_type = receiver_type if signature.return_type == "SELF_TYPE" else signature.return_type
+        return _record_expression_type(expression, result_type, result)
+
+    if isinstance(expression, CaseNode):
+        _infer_expression_type(expression.expression, current_class, scope, result)
+        branch_types: list[str] = []
+        declared_types: set[str] = set()
+        for branch in expression.branches:
+            if branch.type_name == "SELF_TYPE" or not _type_exists(branch.type_name, result):
+                result.errors.append(
+                    SemanticError(
+                        f"Ramo do case usa tipo invalido '{branch.type_name}'"
+                    )
+                )
+            if branch.type_name in declared_types:
+                result.errors.append(
+                    SemanticError(
+                        f"Tipo '{branch.type_name}' aparece mais de uma vez no case"
+                    )
+                )
+            declared_types.add(branch.type_name)
+            branch_scope = Scope(parent=scope)
+            if branch.name == "self":
+                result.errors.append(SemanticError("Um ramo do case nao pode se chamar 'self'"))
+            else:
+                branch_scope.define(branch.name, branch.type_name)
+            branch_type = _infer_expression_type(
+                branch.body, current_class, branch_scope, result
+            )
+            if branch_type is not None:
+                branch_types.append(branch_type)
+        if not branch_types:
+            return None
+        result_type = branch_types[0]
+        for branch_type in branch_types[1:]:
+            joined_type = least_upper_bound(
+                result_type, branch_type, current_class, result.class_table
+            )
+            if joined_type is None:
+                return None
+            result_type = joined_type
+        return _record_expression_type(expression, result_type, result)
 
     return None
 
