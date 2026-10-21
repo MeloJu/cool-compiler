@@ -165,6 +165,74 @@ def _type_exists(type_name: str, result: "SemanticResult") -> bool:
     return type_name == "SELF_TYPE" or type_name in result.class_table
 
 
+def conforms(
+    actual_type: str,
+    expected_type: str,
+    current_class: str,
+    class_table: dict[str, ClassInfo],
+) -> bool:
+    """Informa se ``actual_type`` esta em conformidade com ``expected_type``.
+
+    Em COOL, um tipo esta em conformidade com ele mesmo ou com qualquer um de
+    seus ancestrais. ``SELF_TYPE`` representa a classe que esta sendo
+    analisada e so se conforma diretamente com outro ``SELF_TYPE``.
+    """
+    if actual_type == "SELF_TYPE" and expected_type == "SELF_TYPE":
+        return True
+    if expected_type == "SELF_TYPE":
+        return False
+
+    resolved_actual = current_class if actual_type == "SELF_TYPE" else actual_type
+    if resolved_actual not in class_table or expected_type not in class_table:
+        return False
+
+    current_type: str | None = resolved_actual
+    visited: set[str] = set()
+    while current_type is not None and current_type not in visited:
+        if current_type == expected_type:
+            return True
+        visited.add(current_type)
+        current_info = class_table.get(current_type)
+        current_type = current_info.parent if current_info is not None else None
+    return False
+
+
+def least_upper_bound(
+    left_type: str,
+    right_type: str,
+    current_class: str,
+    class_table: dict[str, ClassInfo],
+) -> str | None:
+    """Devolve o ancestral comum mais especifico entre dois tipos.
+
+    O resultado preserva ``SELF_TYPE`` apenas quando os dois operandos possuem
+    esse tipo. Para os demais casos, ele e resolvido para a classe atual antes
+    de percorrer a hierarquia.
+    """
+    if left_type == "SELF_TYPE" and right_type == "SELF_TYPE":
+        return "SELF_TYPE"
+
+    resolved_left = current_class if left_type == "SELF_TYPE" else left_type
+    resolved_right = current_class if right_type == "SELF_TYPE" else right_type
+    if resolved_left not in class_table or resolved_right not in class_table:
+        return None
+
+    left_ancestors: set[str] = set()
+    current_type: str | None = resolved_left
+    while current_type is not None and current_type not in left_ancestors:
+        left_ancestors.add(current_type)
+        current_type = class_table[current_type].parent
+
+    visited: set[str] = set()
+    current_type = resolved_right
+    while current_type is not None and current_type not in visited:
+        if current_type in left_ancestors:
+            return current_type
+        visited.add(current_type)
+        current_type = class_table[current_type].parent
+    return None
+
+
 def _parent_member(
     class_info: ClassInfo, member_name: str, member_kind: str, result: "SemanticResult"
 ) -> AttributeInfo | MethodSignature | None:

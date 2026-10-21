@@ -6,7 +6,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ast_nodes import ProgramNode
 from parser import parse
-from semantic import Scope, SemanticResult, analyze, builtin_class_table
+from semantic import (
+    Scope,
+    SemanticResult,
+    analyze,
+    builtin_class_table,
+    conforms,
+    least_upper_bound,
+)
 
 
 class TestSemanticBase(unittest.TestCase):
@@ -133,6 +140,36 @@ class TestSemanticBase(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertTrue(
             any("assinatura diferente da versao herdada" in error.message for error in result.errors)
+        )
+
+    def test_conformidade_entre_classes_da_hierarquia(self):
+        result = analyze(parse("class A { }; class B inherits A { };"))
+
+        self.assertTrue(conforms("B", "A", "B", result.class_table))
+        self.assertTrue(conforms("B", "Object", "B", result.class_table))
+        self.assertFalse(conforms("A", "B", "A", result.class_table))
+
+    def test_conformidade_com_self_type(self):
+        result = analyze(parse("class Main { };"))
+
+        self.assertTrue(conforms("SELF_TYPE", "SELF_TYPE", "Main", result.class_table))
+        self.assertTrue(conforms("SELF_TYPE", "Object", "Main", result.class_table))
+        self.assertFalse(conforms("Object", "SELF_TYPE", "Main", result.class_table))
+
+    def test_uniao_de_tipos_irmaos(self):
+        result = analyze(
+            parse("class A { }; class B inherits A { }; class C inherits A { };")
+        )
+
+        self.assertEqual(least_upper_bound("B", "C", "B", result.class_table), "A")
+        self.assertEqual(least_upper_bound("Int", "Bool", "B", result.class_table), "Object")
+
+    def test_uniao_preserva_self_type_quando_ambos_sao_self_type(self):
+        result = analyze(parse("class Main { };"))
+
+        self.assertEqual(
+            least_upper_bound("SELF_TYPE", "SELF_TYPE", "Main", result.class_table),
+            "SELF_TYPE",
         )
 
 
