@@ -34,4 +34,4 @@ class TestCli(unittest.TestCase):
             main.main()
 
         self.assertEqual(exit_error.exception.code, 1)
-        self.assertIn("Erro semantico:", output.getvalue())
+        self.assertIn("Erro semantico na linha 1:", output.getvalue())

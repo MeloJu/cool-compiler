@@ -200,6 +200,17 @@ class TestSemanticBase(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("Identificador 'ausente' nao foi declarado", result.errors[0].message)
 
+    def test_erro_semantico_guarda_linha_da_expressao(self):
+        source = """
+        class Main {
+            main() : Object { ausente };
+        };
+        """
+        result = analyze(parse(source))
+
+        error = next(error for error in result.errors if "ausente" in error.message)
+        self.assertEqual(error.line, 3)
+
     def test_rejeita_atribuicao_com_tipo_incompativel(self):
         source = "class Main { valor : Int; define() : Bool { valor <- true }; };"
         result = analyze(parse(source))

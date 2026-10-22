@@ -31,6 +31,7 @@ class SemanticError:
     """Representa um erro encontrado durante a analise semantica."""
 
     message: str
+    line: int | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class MethodSignature:
 
     parameter_types: tuple[str, ...]
     return_type: str
+    line: int | None = field(default=None, kw_only=True, compare=False)
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class AttributeInfo:
     """Declaracao de um atributo conhecida pela analise semantica."""
 
     type_name: str
+    line: int | None = field(default=None, kw_only=True, compare=False)
 
 
 @dataclass
@@ -54,6 +57,7 @@ class ClassInfo:
 
     name: str
     parent: str | None
+    line: int | None = None
     attributes: dict[str, AttributeInfo] = field(default_factory=dict)
     methods: dict[str, MethodSignature] = field(default_factory=dict)
 
@@ -124,19 +128,18 @@ def _register_program_classes(
     registered_classes: list[ClassNode] = []
     for class_node in program.classes:
         if class_node.name == "SELF_TYPE":
-            result.errors.append(
-                SemanticError("'SELF_TYPE' nao pode ser usado como nome de classe")
-            )
+            result.add_error("'SELF_TYPE' nao pode ser usado como nome de classe", class_node)
             continue
         if class_node.name in result.class_table:
-            result.errors.append(
-                SemanticError(f"Classe '{class_node.name}' foi definida mais de uma vez")
+            result.add_error(
+                f"Classe '{class_node.name}' foi definida mais de uma vez", class_node
             )
             continue
 
         result.class_table[class_node.name] = ClassInfo(
             name=class_node.name,
             parent=class_node.parent,
+            line=class_node.line,
         )
         registered_classes.append(class_node)
     return registered_classes
@@ -155,16 +158,13 @@ def _validate_inheritance(
 
         parent = class_node.parent
         if parent not in result.class_table:
-            result.errors.append(
-                SemanticError(
-                    f"Classe '{class_node.name}' herda de classe inexistente '{parent}'"
-                )
+            result.add_error(
+                f"Classe '{class_node.name}' herda de classe inexistente '{parent}'",
+                class_node,
             )
         elif parent in forbidden_parents:
-            result.errors.append(
-                SemanticError(
-                    f"Classe '{class_node.name}' nao pode herdar de '{parent}'"
-                )
+            result.add_error(
+                f"Classe '{class_node.name}' nao pode herdar de '{parent}'", class_node
             )
 
     for class_name in class_names:
@@ -172,8 +172,9 @@ def _validate_inheritance(
         current = class_name
         while current in class_names:
             if current in visited:
-                result.errors.append(
-                    SemanticError(f"Ciclo de heranca detectado na classe '{class_name}'")
+                cycle_node = next(node for node in classes if node.name == class_name)
+                result.add_error(
+                    f"Ciclo de heranca detectado na classe '{class_name}'", cycle_node
                 )
                 break
             visited.add(current)
@@ -280,40 +281,35 @@ def _validate_feature_types(
 ) -> None:
     if isinstance(feature, AttributeNode):
         if not _type_exists(feature.type_name, result):
-            result.errors.append(
-                SemanticError(
-                    f"Atributo '{feature.name}' da classe '{class_node.name}' "
-                    f"usa tipo inexistente '{feature.type_name}'"
-                )
+            result.add_error(
+                f"Atributo '{feature.name}' da classe '{class_node.name}' "
+                f"usa tipo inexistente '{feature.type_name}'",
+                feature,
             )
         return
 
     if not _type_exists(feature.return_type, result):
-        result.errors.append(
-            SemanticError(
-                f"Metodo '{feature.name}' da classe '{class_node.name}' "
-                f"usa tipo de retorno inexistente '{feature.return_type}'"
-            )
+        result.add_error(
+            f"Metodo '{feature.name}' da classe '{class_node.name}' "
+            f"usa tipo de retorno inexistente '{feature.return_type}'",
+            feature,
         )
 
     formal_scope = Scope()
     for formal in feature.params:
         if formal.name == "self":
-            result.errors.append(
-                SemanticError(f"Metodo '{feature.name}' nao pode ter parametro chamado 'self'")
+            result.add_error(
+                f"Metodo '{feature.name}' nao pode ter parametro chamado 'self'", formal
             )
         elif not formal_scope.define(formal.name, formal.type_name):
-            result.errors.append(
-                SemanticError(
-                    f"Metodo '{feature.name}' possui parametro duplicado '{formal.name}'"
-                )
+            result.add_error(
+                f"Metodo '{feature.name}' possui parametro duplicado '{formal.name}'", formal
             )
         if formal.type_name == "SELF_TYPE" or not _type_exists(formal.type_name, result):
-            result.errors.append(
-                SemanticError(
-                    f"Parametro '{formal.name}' do metodo '{feature.name}' "
-                    f"usa tipo invalido '{formal.type_name}'"
-                )
+            result.add_error(
+                f"Parametro '{formal.name}' do metodo '{feature.name}' "
+                f"usa tipo invalido '{formal.type_name}'",
+                formal,
             )
 
 
@@ -325,30 +321,29 @@ def _register_features(classes: list[ClassNode], result: "SemanticResult") -> No
             _validate_feature_types(class_node, feature, result)
             if isinstance(feature, AttributeNode):
                 if feature.name == "self":
-                    result.errors.append(
-                        SemanticError("Um atributo nao pode receber o nome 'self'")
-                    )
+                    result.add_error("Um atributo nao pode receber o nome 'self'", feature)
                 elif feature.name in class_info.attributes:
-                    result.errors.append(
-                        SemanticError(
-                            f"Atributo '{feature.name}' foi definido mais de uma vez "
-                            f"na classe '{class_node.name}'"
-                        )
+                    result.add_error(
+                        f"Atributo '{feature.name}' foi definido mais de uma vez "
+                        f"na classe '{class_node.name}'",
+                        feature,
                     )
                 else:
-                    class_info.attributes[feature.name] = AttributeInfo(feature.type_name)
+                    class_info.attributes[feature.name] = AttributeInfo(
+                        feature.type_name, line=feature.line
+                    )
             elif isinstance(feature, MethodNode):
                 if feature.name in class_info.methods:
-                    result.errors.append(
-                        SemanticError(
-                            f"Metodo '{feature.name}' foi definido mais de uma vez "
-                            f"na classe '{class_node.name}'"
-                        )
+                    result.add_error(
+                        f"Metodo '{feature.name}' foi definido mais de uma vez "
+                        f"na classe '{class_node.name}'",
+                        feature,
                     )
                 else:
                     class_info.methods[feature.name] = MethodSignature(
                         tuple(formal.type_name for formal in feature.params),
                         feature.return_type,
+                        line=feature.line,
                     )
 
 
@@ -360,20 +355,18 @@ def _validate_inherited_features(
         class_info = result.class_table[class_node.name]
         for attribute_name in class_info.attributes:
             if _parent_member(class_info, attribute_name, "attribute", result) is not None:
-                result.errors.append(
-                    SemanticError(
-                        f"Atributo '{attribute_name}' da classe '{class_node.name}' "
-                        "redefine um atributo herdado"
-                    )
+                result.add_error(
+                    f"Atributo '{attribute_name}' da classe '{class_node.name}' "
+                    "redefine um atributo herdado",
+                    class_node,
                 )
         for method_name, signature in class_info.methods.items():
             inherited = _parent_member(class_info, method_name, "method", result)
             if inherited is not None and signature != inherited:
-                result.errors.append(
-                    SemanticError(
-                        f"Metodo '{method_name}' da classe '{class_node.name}' "
-                        "tem assinatura diferente da versao herdada"
-                    )
+                result.add_error(
+                    f"Metodo '{method_name}' da classe '{class_node.name}' "
+                    "tem assinatura diferente da versao herdada",
+                    class_node,
                 )
 
 
@@ -381,19 +374,15 @@ def _validate_entry_point(result: "SemanticResult") -> None:
     """Garante que o programa possua o ponto de entrada exigido por COOL."""
     main_class = result.class_table.get("Main")
     if main_class is None:
-        result.errors.append(SemanticError("A classe 'Main' nao foi definida"))
+        result.add_error("A classe 'Main' nao foi definida")
         return
 
     main_method = main_class.methods.get("main")
     if main_method is None:
-        result.errors.append(
-            SemanticError("O metodo 'main' nao foi definido na classe 'Main'")
-        )
+        result.add_error("O metodo 'main' nao foi definido na classe 'Main'", main_class)
         return
     if main_method.parameter_types:
-        result.errors.append(
-            SemanticError("O metodo 'Main.main' nao pode receber parametros")
-        )
+        result.add_error("O metodo 'Main.main' nao pode receber parametros", main_method)
 
 
 def _record_expression_type(
@@ -445,15 +434,16 @@ def _infer_expression_type(
     result: "SemanticResult",
 ) -> str | None:
     """Infere o tipo das expressoes basicas suportadas nesta etapa."""
+    def report(message: str) -> None:
+        result.add_error(message, expression)
+
     if isinstance(expression, LiteralNode):
         return _record_expression_type(expression, expression.type_name, result)
 
     if isinstance(expression, VariableNode):
         variable_type = scope.lookup(expression.name)
         if variable_type is None:
-            result.errors.append(
-                SemanticError(f"Identificador '{expression.name}' nao foi declarado")
-            )
+            report(f"Identificador '{expression.name}' nao foi declarado")
             return None
         return _record_expression_type(expression, variable_type, result)
 
@@ -462,22 +452,18 @@ def _infer_expression_type(
             expression.value, current_class, scope, result
         )
         if expression.name == "self":
-            result.errors.append(SemanticError("Nao e permitido atribuir um valor a 'self'"))
+            report("Nao e permitido atribuir um valor a 'self'")
             return value_type
         variable_type = scope.lookup(expression.name)
         if variable_type is None:
-            result.errors.append(
-                SemanticError(f"Identificador '{expression.name}' nao foi declarado")
-            )
+            report(f"Identificador '{expression.name}' nao foi declarado")
             return value_type
         if value_type is not None and not conforms(
             value_type, variable_type, current_class, result.class_table
         ):
-            result.errors.append(
-                SemanticError(
-                    f"Atribuicao a '{expression.name}' espera '{variable_type}', "
-                    f"mas recebeu '{value_type}'"
-                )
+            report(
+                f"Atribuicao a '{expression.name}' espera '{variable_type}', "
+                f"mas recebeu '{value_type}'"
             )
         if value_type is None:
             return None
@@ -492,28 +478,18 @@ def _infer_expression_type(
             return None
         if expression.operator in {"+", "-", "*", "/"}:
             if left_type != "Int" or right_type != "Int":
-                result.errors.append(
-                    SemanticError(
-                        f"Operador '{expression.operator}' exige dois operandos Int"
-                    )
-                )
+                report(f"Operador '{expression.operator}' exige dois operandos Int")
                 return None
             return _record_expression_type(expression, "Int", result)
         if expression.operator in {"<", "<="}:
             if left_type != "Int" or right_type != "Int":
-                result.errors.append(
-                    SemanticError(
-                        f"Operador '{expression.operator}' exige dois operandos Int"
-                    )
-                )
+                report(f"Operador '{expression.operator}' exige dois operandos Int")
                 return None
             return _record_expression_type(expression, "Bool", result)
         if expression.operator == "=":
             basic_types = {"Int", "Bool", "String"}
             if (left_type in basic_types or right_type in basic_types) and left_type != right_type:
-                result.errors.append(
-                    SemanticError("Comparacao '=' entre tipos basicos exige tipos iguais")
-                )
+                report("Comparacao '=' entre tipos basicos exige tipos iguais")
                 return None
             return _record_expression_type(expression, "Bool", result)
 
@@ -525,11 +501,9 @@ def _infer_expression_type(
             return None
         required_type = {"~": "Int", "not": "Bool"}.get(expression.operator)
         if required_type is not None and operand_type != required_type:
-            result.errors.append(
-                SemanticError(
-                    f"Operador '{expression.operator}' exige operando do tipo "
-                    f"'{required_type}'"
-                )
+            report(
+                f"Operador '{expression.operator}' exige operando do tipo "
+                f"'{required_type}'"
             )
             return None
         if expression.operator == "isvoid":
@@ -542,7 +516,7 @@ def _infer_expression_type(
             expression.condition, current_class, scope, result
         )
         if condition_type is not None and condition_type != "Bool":
-            result.errors.append(SemanticError("Condicao de 'if' deve possuir tipo 'Bool'"))
+            report("Condicao de 'if' deve possuir tipo 'Bool'")
         then_type = _infer_expression_type(
             expression.then_expr, current_class, scope, result
         )
@@ -563,9 +537,7 @@ def _infer_expression_type(
             expression.condition, current_class, scope, result
         )
         if condition_type is not None and condition_type != "Bool":
-            result.errors.append(
-                SemanticError("Condicao de 'while' deve possuir tipo 'Bool'")
-            )
+            report("Condicao de 'while' deve possuir tipo 'Bool'")
         _infer_expression_type(expression.body, current_class, scope, result)
         return _record_expression_type(expression, "Object", result)
 
@@ -585,11 +557,10 @@ def _infer_expression_type(
             if binding.type_name == "SELF_TYPE" or not _type_exists(
                 binding.type_name, result
             ):
-                result.errors.append(
-                    SemanticError(
-                        f"Ligacao '{binding.name}' do let usa tipo invalido "
-                        f"'{binding.type_name}'"
-                    )
+                result.add_error(
+                    f"Ligacao '{binding.name}' do let usa tipo invalido "
+                    f"'{binding.type_name}'",
+                    binding,
                 )
             if binding.init is not None:
                 init_type = _infer_expression_type(
@@ -598,14 +569,13 @@ def _infer_expression_type(
                 if init_type is not None and not conforms(
                     init_type, binding.type_name, current_class, result.class_table
                 ):
-                    result.errors.append(
-                        SemanticError(
-                            f"Inicializacao de '{binding.name}' no let espera "
-                            f"'{binding.type_name}', mas recebeu '{init_type}'"
-                        )
+                    result.add_error(
+                        f"Inicializacao de '{binding.name}' no let espera "
+                        f"'{binding.type_name}', mas recebeu '{init_type}'",
+                        binding,
                     )
             if binding.name == "self":
-                result.errors.append(SemanticError("Uma ligacao do let nao pode se chamar 'self'"))
+                result.add_error("Uma ligacao do let nao pode se chamar 'self'", binding)
             else:
                 let_scope.define(binding.name, binding.type_name)
         body_type = _infer_expression_type(expression.body, current_class, let_scope, result)
@@ -615,9 +585,7 @@ def _infer_expression_type(
 
     if isinstance(expression, NewNode):
         if not _type_exists(expression.type_name, result):
-            result.errors.append(
-                SemanticError(f"Nao e possivel instanciar tipo inexistente '{expression.type_name}'")
-            )
+            report(f"Nao e possivel instanciar tipo inexistente '{expression.type_name}'")
             return None
         return _record_expression_type(expression, expression.type_name, result)
 
@@ -635,20 +603,14 @@ def _infer_expression_type(
             if expression.static_type == "SELF_TYPE" or not _type_exists(
                 expression.static_type, result
             ):
-                result.errors.append(
-                    SemanticError(
-                        f"Despacho estatico usa tipo invalido '{expression.static_type}'"
-                    )
-                )
+                report(f"Despacho estatico usa tipo invalido '{expression.static_type}'")
                 return None
             if not conforms(
                 receiver_type, expression.static_type, current_class, result.class_table
             ):
-                result.errors.append(
-                    SemanticError(
-                        f"Receptor do despacho estatico nao esta em conformidade com "
-                        f"'{expression.static_type}'"
-                    )
+                report(
+                    f"Receptor do despacho estatico nao esta em conformidade com "
+                    f"'{expression.static_type}'"
                 )
                 return None
             dispatch_type = expression.static_type
@@ -661,18 +623,12 @@ def _infer_expression_type(
             dispatch_type, expression.method, current_class, result
         )
         if signature is None:
-            result.errors.append(
-                SemanticError(
-                    f"Metodo '{expression.method}' nao existe no tipo '{dispatch_type}'"
-                )
-            )
+            report(f"Metodo '{expression.method}' nao existe no tipo '{dispatch_type}'")
             return None
         if len(expression.args) != len(signature.parameter_types):
-            result.errors.append(
-                SemanticError(
-                    f"Metodo '{expression.method}' espera {len(signature.parameter_types)} "
-                    f"argumento(s), mas recebeu {len(expression.args)}"
-                )
+            report(
+                f"Metodo '{expression.method}' espera {len(signature.parameter_types)} "
+                f"argumento(s), mas recebeu {len(expression.args)}"
             )
         for argument_type, parameter_type in zip(
             argument_types, signature.parameter_types
@@ -680,11 +636,9 @@ def _infer_expression_type(
             if argument_type is not None and not conforms(
                 argument_type, parameter_type, current_class, result.class_table
             ):
-                result.errors.append(
-                    SemanticError(
-                        f"Argumento de '{expression.method}' espera '{parameter_type}', "
-                        f"mas recebeu '{argument_type}'"
-                    )
+                report(
+                    f"Argumento de '{expression.method}' espera '{parameter_type}', "
+                    f"mas recebeu '{argument_type}'"
                 )
         result_type = receiver_type if signature.return_type == "SELF_TYPE" else signature.return_type
         return _record_expression_type(expression, result_type, result)
@@ -695,21 +649,17 @@ def _infer_expression_type(
         declared_types: set[str] = set()
         for branch in expression.branches:
             if branch.type_name == "SELF_TYPE" or not _type_exists(branch.type_name, result):
-                result.errors.append(
-                    SemanticError(
-                        f"Ramo do case usa tipo invalido '{branch.type_name}'"
-                    )
+                result.add_error(
+                    f"Ramo do case usa tipo invalido '{branch.type_name}'", branch
                 )
             if branch.type_name in declared_types:
-                result.errors.append(
-                    SemanticError(
-                        f"Tipo '{branch.type_name}' aparece mais de uma vez no case"
-                    )
+                result.add_error(
+                    f"Tipo '{branch.type_name}' aparece mais de uma vez no case", branch
                 )
             declared_types.add(branch.type_name)
             branch_scope = Scope(parent=scope)
             if branch.name == "self":
-                result.errors.append(SemanticError("Um ramo do case nao pode se chamar 'self'"))
+                result.add_error("Um ramo do case nao pode se chamar 'self'", branch)
             else:
                 branch_scope.define(branch.name, branch.type_name)
             branch_type = _infer_expression_type(
@@ -746,11 +696,10 @@ def _validate_basic_expression_types(
                 if init_type is not None and not conforms(
                     init_type, feature.type_name, class_node.name, result.class_table
                 ):
-                    result.errors.append(
-                        SemanticError(
-                            f"Inicializacao do atributo '{feature.name}' espera "
-                            f"'{feature.type_name}', mas recebeu '{init_type}'"
-                        )
+                    result.add_error(
+                        f"Inicializacao do atributo '{feature.name}' espera "
+                        f"'{feature.type_name}', mas recebeu '{init_type}'",
+                        feature,
                     )
             elif isinstance(feature, MethodNode):
                 method_scope = Scope(parent=class_scope)
@@ -762,11 +711,10 @@ def _validate_basic_expression_types(
                 if body_type is not None and not conforms(
                     body_type, feature.return_type, class_node.name, result.class_table
                 ):
-                    result.errors.append(
-                        SemanticError(
-                            f"Metodo '{feature.name}' declara retorno '{feature.return_type}', "
-                            f"mas o corpo possui tipo '{body_type}'"
-                        )
+                    result.add_error(
+                        f"Metodo '{feature.name}' declara retorno '{feature.return_type}', "
+                        f"mas o corpo possui tipo '{body_type}'",
+                        feature,
                     )
 
 
@@ -777,6 +725,10 @@ class SemanticResult:
     errors: list[SemanticError] = field(default_factory=list)
     class_table: dict[str, ClassInfo] = field(default_factory=builtin_class_table)
     expression_types: dict[int, str] = field(default_factory=dict)
+
+    def add_error(self, message: str, node: object | None = None) -> None:
+        """Registra um erro, preservando a linha do no que o originou."""
+        self.errors.append(SemanticError(message, getattr(node, "line", None)))
 
     @property
     def success(self) -> bool:

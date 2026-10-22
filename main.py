@@ -52,7 +52,10 @@ def main() -> None:
         result = analyze(program)
         if not result.success:
             for error in result.errors:
-                print(f"Erro semantico: {error.message}")
+                location = (
+                    f" na linha {error.line}" if error.line is not None else ""
+                )
+                print(f"Erro semantico{location}: {error.message}")
             sys.exit(1)
         print("Analise semantica concluida com sucesso.")
     else:
