@@ -165,6 +165,22 @@ class TestCodegenBase(unittest.TestCase):
         self.assertTrue(any(call["funcs"] == ["__cool_out_string"] for call in calls))
         self.assertIn("__cool_out_string", [function["name"] for function in bril["functions"]])
 
+    def test_gera_case_com_ramo_mais_especifico(self):
+        program = parse(
+            "class A { }; class B inherits A { }; "
+            "class Main { main() : Object { let item : A <- new B in "
+            "case item of a : A => 1; b : B => 2; esac }; };"
+        )
+
+        bril = generate_bril(program)
+        main = bril["functions"][-1]
+        instructions = main["instrs"]
+
+        self.assertTrue(
+            any(instruction.get("label", "").startswith("case_branch") for instruction in instructions)
+        )
+        self.assertIn("br", [instruction.get("op") for instruction in instructions])
+
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
 

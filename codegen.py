@@ -7,6 +7,7 @@ from ast_nodes import (
     AttributeNode,
     BinaryOpNode,
     BlockNode,
+    CaseNode,
     IfNode,
     LetNode,
     LiteralNode,
@@ -411,6 +412,94 @@ class BrilGenerator:
         )
         self.emit({"op": "load", "dest": tag, "type": "int", "args": [address]})
         return tag
+
+    def _inheritance_distance(self, class_name: str, ancestor: str) -> int | None:
+        """Calcula quantos passos separam uma classe de um possivel ancestral."""
+        distance = 0
+        current: str | None = class_name
+        while current is not None:
+            if current == ancestor:
+                return distance
+            current = self.known_parents.get(current)
+            distance += 1
+        return None
+
+    def _case_branch_for_class(self, expression: CaseNode, class_name: str):
+        """Escolhe o ramo de case mais especifico aplicavel a uma classe."""
+        matches = []
+        for branch in expression.branches:
+            distance = self._inheritance_distance(class_name, branch.type_name)
+            if distance is not None:
+                matches.append((distance, branch))
+        if not matches:
+            return None
+        return min(matches, key=lambda item: item[0])[1]
+
+    def _generate_case(
+        self,
+        expression: CaseNode,
+        expression_types: dict[int, str],
+        environment: dict[str, str | AttributeAccess],
+    ) -> str:
+        """Gera a selecao de um ramo COOL case a partir da tag do objeto."""
+        subject = self._generate_expression(
+            expression.expression, expression_types, environment
+        )
+        if subject is None:
+            raise CodeGenerationError("Expressao de case sem valor")
+        subject_type = expression_types.get(id(expression.expression))
+        if subject_type == "SELF_TYPE":
+            subject_type = self.current_class
+        if subject_type is None:
+            raise CodeGenerationError("Tipo ausente para a expressao de case")
+        if subject_type not in self.known_parents:
+            raise CodeGenerationError(
+                f"Case sobre o tipo '{subject_type}' ainda nao foi implementado"
+            )
+        result_type = expression_types.get(id(expression))
+        if result_type is None:
+            raise CodeGenerationError("Tipo ausente para o resultado de case")
+        result = self.new_temporary()
+        result_bril_type = self._bril_type(
+            self.current_class if result_type == "SELF_TYPE" else result_type
+        )
+        tag = self._object_tag(subject)
+        end_label = self.new_label("case_end")
+        candidates = [
+            class_name
+            for class_name in self.class_tags
+            if self._conforms_to_class(class_name, subject_type)
+            and self._case_branch_for_class(expression, class_name) is not None
+        ]
+        if not candidates:
+            raise CodeGenerationError("Nenhum ramo de case pode receber o objeto")
+
+        for index, candidate in enumerate(candidates):
+            branch = self._case_branch_for_class(expression, candidate)
+            assert branch is not None
+            body_label = self.new_label("case_branch")
+            next_label = end_label if index == len(candidates) - 1 else self.new_label("case_next")
+            expected_tag = self.new_temporary()
+            matches = self.new_temporary()
+            self.emit(
+                {"op": "const", "dest": expected_tag, "type": "int", "value": self.class_tags[candidate]}
+            )
+            self.emit({"op": "eq", "dest": matches, "type": "bool", "args": [tag, expected_tag]})
+            self.emit({"op": "br", "args": [matches], "labels": [body_label, next_label]})
+            self.emit({"label": body_label})
+            branch_environment = environment.copy()
+            branch_environment[branch.name] = subject
+            value = self._generate_expression(
+                branch.body, expression_types, branch_environment
+            )
+            if value is None:
+                raise CodeGenerationError("Ramo de case sem valor")
+            self.emit({"op": "id", "dest": result, "type": result_bril_type, "args": [value]})
+            self.emit({"op": "jmp", "labels": [end_label]})
+            if next_label != end_label:
+                self.emit({"label": next_label})
+        self.emit({"label": end_label})
+        return result
 
     def _generate_method_call(
         self,
@@ -835,6 +924,9 @@ class BrilGenerator:
 
         if isinstance(expression, MethodCallNode):
             return self._generate_method_call(expression, expression_types, environment)
+
+        if isinstance(expression, CaseNode):
+            return self._generate_case(expression, expression_types, environment)
 
         raise CodeGenerationError(
             f"Geracao Bril para '{type(expression).__name__}' ainda nao foi implementada"
