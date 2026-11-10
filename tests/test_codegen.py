@@ -94,6 +94,20 @@ class TestCodegenBase(unittest.TestCase):
             )
         )
 
+    def test_gera_metodo_com_parametro_como_funcao_bril(self):
+        program = parse(
+            "class Main { dobro(x : Int) : Int { x + x }; "
+            "main() : Object { 0 }; };"
+        )
+
+        bril = generate_bril(program)
+        method = next(function for function in bril["functions"] if function["name"] == "Main__dobro")
+
+        self.assertEqual(method["args"][0]["type"], "int")
+        self.assertEqual(method["type"], "int")
+        self.assertIn("add", [instruction.get("op") for instruction in method["instrs"]])
+        self.assertEqual(method["instrs"][-1]["op"], "ret")
+
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
 

@@ -472,6 +472,54 @@ class BrilGenerator:
                         return feature
         raise CodeGenerationError("Metodo Main.main nao encontrado")
 
+    @staticmethod
+    def _method_name(class_name: str, method_name: str) -> str:
+        """Cria um nome Bril sem ambiguidades para um metodo COOL."""
+        return f"{class_name}__{method_name}"
+
+    def _generate_method(
+        self,
+        class_name: str,
+        method: MethodNode,
+        expression_types: dict[int, str],
+    ) -> None:
+        """Traduz um metodo COOL basico para uma funcao Bril com retorno."""
+        arguments: list[dict] = []
+        environment: dict[str, str] = {}
+        for parameter in method.params:
+            argument_name = self.new_temporary()
+            arguments.append(
+                {"name": argument_name, "type": self._bril_type(parameter.type_name)}
+            )
+            environment[parameter.name] = argument_name
+
+        body_type = expression_types.get(id(method.body))
+        if body_type is None:
+            raise CodeGenerationError(
+                f"Tipo ausente para o corpo de {class_name}.{method.name}"
+            )
+        self._start_function(
+            self._method_name(class_name, method.name), arguments, self._bril_type(body_type)
+        )
+        result = self._generate_expression(method.body, expression_types, environment)
+        if result is None:
+            raise CodeGenerationError(
+                f"O metodo {class_name}.{method.name} nao produz um valor Bril"
+            )
+        self.emit({"op": "ret", "args": [result]})
+
+    def _generate_methods(
+        self, program: ProgramNode, expression_types: dict[int, str]
+    ) -> None:
+        """Gera as funcoes dos metodos definidos pelo usuario."""
+        for class_node in program.classes:
+            for feature in class_node.features:
+                if not isinstance(feature, MethodNode):
+                    continue
+                if class_node.name == "Main" and feature.name == "main":
+                    continue
+                self._generate_method(class_node.name, feature, expression_types)
+
     def generate(self, program: ProgramNode) -> dict:
         """Gera a estrutura JSON inicial de um programa Bril.
 
@@ -484,11 +532,12 @@ class BrilGenerator:
         self.functions = []
         self._temporary_index = 0
         self._label_index = 0
-        self._generate_string_runtime()
-        self._generate_entry_point()
         analysis: SemanticResult = analyze(program)
         if not analysis.success:
             raise CodeGenerationError("Nao e possivel gerar Bril para um programa semanticamente invalido")
+        self._generate_string_runtime()
+        self._generate_methods(program, analysis.expression_types)
+        self._generate_entry_point()
         self._generate_expression(self._main_method(program).body, analysis.expression_types, {})
         return {"functions": self.functions}
 
