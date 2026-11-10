@@ -124,6 +124,33 @@ class TestCodegenBase(unittest.TestCase):
         self.assertIn("store", [instruction.get("op") for instruction in main["instrs"]])
         self.assertIn("load", [instruction.get("op") for instruction in method["instrs"]])
 
+    def test_gera_despacho_dinamico_para_metodo_sobrescrito(self):
+        program = parse(
+            "class A { valor() : Int { 1 }; }; "
+            "class B inherits A { valor() : Int { 2 }; }; "
+            "class Main { main() : Object { let item : A <- new B in item.valor() }; };"
+        )
+
+        bril = generate_bril(program)
+        main = bril["functions"][-1]
+        calls = [instruction for instruction in main["instrs"] if instruction.get("op") == "call"]
+
+        self.assertTrue(any(call["funcs"] == ["A__valor"] for call in calls))
+        self.assertTrue(any(call["funcs"] == ["B__valor"] for call in calls))
+
+    def test_gera_despacho_estatico_para_classe_indicada(self):
+        program = parse(
+            "class A { valor() : Int { 1 }; }; "
+            "class B inherits A { valor() : Int { 2 }; }; "
+            "class Main { main() : Object { (new B)@A.valor() }; };"
+        )
+
+        bril = generate_bril(program)
+        main = bril["functions"][-1]
+        calls = [instruction for instruction in main["instrs"] if instruction.get("op") == "call"]
+
+        self.assertEqual(calls[-1]["funcs"], ["A__valor"])
+
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
 

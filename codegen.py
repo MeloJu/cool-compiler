@@ -11,6 +11,7 @@ from ast_nodes import (
     LetNode,
     LiteralNode,
     MethodNode,
+    MethodCallNode,
     NewNode,
     ProgramNode,
     UnaryOpNode,
@@ -43,6 +44,8 @@ class BrilGenerator:
         self._label_index = 0
         self.class_layouts: dict[str, dict[str, tuple[int, str, AttributeNode]]] = {}
         self.class_tags: dict[str, int] = {}
+        self.class_parents: dict[str, str] = {}
+        self.current_class = "Main"
 
     def new_temporary(self) -> str:
         """Devolve um nome unico para um valor intermediario em Bril."""
@@ -269,6 +272,9 @@ class BrilGenerator:
     def _build_class_layouts(self, program: ProgramNode) -> None:
         """Define o slot de cada atributo, preservando a ordem da heranca."""
         classes = {class_node.name: class_node for class_node in program.classes}
+        self.class_parents = {
+            class_node.name: class_node.parent for class_node in program.classes
+        }
         built: set[str] = set()
 
         def build(class_name: str) -> None:
@@ -288,6 +294,145 @@ class BrilGenerator:
 
         for class_node in program.classes:
             build(class_node.name)
+
+    def _conforms_to_class(self, class_name: str, expected_parent: str) -> bool:
+        """Informa se uma classe do programa herda de outra classe dada."""
+        current: str | None = class_name
+        while current is not None:
+            if current == expected_parent:
+                return True
+            current = self.class_parents.get(current)
+        return False
+
+    def _method_implementation(self, class_name: str, method_name: str) -> str | None:
+        """Encontra a classe que define a implementacao herdada de um metodo."""
+        current: str | None = class_name
+        while current in self.class_parents:
+            class_layout = self._program_methods.get(current, set())
+            if method_name in class_layout:
+                return current
+            current = self.class_parents.get(current)
+        return None
+
+    def _object_tag(self, object_register: str) -> str:
+        """Carrega a tag dinamica guardada no primeiro slot do objeto."""
+        position = self.new_temporary()
+        address = self.new_temporary()
+        tag = self.new_temporary()
+        self.emit({"op": "const", "dest": position, "type": "int", "value": 0})
+        self.emit(
+            {
+                "op": "ptradd",
+                "dest": address,
+                "type": {"ptr": "int"},
+                "args": [object_register, position],
+            }
+        )
+        self.emit({"op": "load", "dest": tag, "type": "int", "args": [address]})
+        return tag
+
+    def _generate_method_call(
+        self,
+        expression: MethodCallNode,
+        expression_types: dict[int, str],
+        environment: dict[str, str | AttributeAccess],
+    ) -> str:
+        """Gera um despacho estatico ou dinamico para metodos de classes COOL."""
+        if expression.receiver is None:
+            receiver = environment.get("self")
+            if not isinstance(receiver, str):
+                raise CodeGenerationError("Chamada implicita sem objeto self")
+            receiver_type = self.current_class
+        else:
+            receiver = self._generate_expression(
+                expression.receiver, expression_types, environment
+            )
+            if receiver is None:
+                raise CodeGenerationError("Receptor de chamada sem valor")
+            receiver_type = expression_types.get(id(expression.receiver))
+            if receiver_type == "SELF_TYPE":
+                receiver_type = self.current_class
+        if receiver_type is None:
+            raise CodeGenerationError("Tipo ausente para o receptor de uma chamada")
+
+        dispatch_type = expression.static_type or receiver_type
+        if dispatch_type not in self.class_parents:
+            raise CodeGenerationError(
+                f"Chamada de metodo nativo '{dispatch_type}.{expression.method}' ainda nao foi implementada"
+            )
+        arguments: list[str] = [receiver]
+        for argument in expression.args:
+            value = self._generate_expression(argument, expression_types, environment)
+            if value is None:
+                raise CodeGenerationError("Argumento de chamada sem valor")
+            arguments.append(value)
+
+        return_type = expression_types.get(id(expression))
+        if return_type is None:
+            raise CodeGenerationError("Tipo ausente para o retorno de uma chamada")
+        result = self.new_temporary()
+        result_bril_type = self._bril_type(
+            self.current_class if return_type == "SELF_TYPE" else return_type
+        )
+
+        if expression.static_type is not None:
+            implementation = self._method_implementation(dispatch_type, expression.method)
+            if implementation is None:
+                raise CodeGenerationError(
+                    f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                )
+            self.emit(
+                {
+                    "op": "call",
+                    "dest": result,
+                    "type": result_bril_type,
+                    "funcs": [self._method_name(implementation, expression.method)],
+                    "args": arguments,
+                }
+            )
+            return result
+
+        tag = self._object_tag(receiver)
+        end_label = self.new_label("dispatch_end")
+        candidates = [
+            class_name
+            for class_name in self.class_tags
+            if self._conforms_to_class(class_name, dispatch_type)
+        ]
+        if not candidates:
+            raise CodeGenerationError(
+                f"Nenhuma classe encontrada para o despacho de '{expression.method}'"
+            )
+        for index, candidate in enumerate(candidates):
+            call_label = self.new_label("dispatch_call")
+            next_label = end_label if index == len(candidates) - 1 else self.new_label("dispatch_next")
+            expected_tag = self.new_temporary()
+            matches = self.new_temporary()
+            self.emit(
+                {"op": "const", "dest": expected_tag, "type": "int", "value": self.class_tags[candidate]}
+            )
+            self.emit({"op": "eq", "dest": matches, "type": "bool", "args": [tag, expected_tag]})
+            self.emit({"op": "br", "args": [matches], "labels": [call_label, next_label]})
+            self.emit({"label": call_label})
+            implementation = self._method_implementation(candidate, expression.method)
+            if implementation is None:
+                raise CodeGenerationError(
+                    f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                )
+            self.emit(
+                {
+                    "op": "call",
+                    "dest": result,
+                    "type": result_bril_type,
+                    "funcs": [self._method_name(implementation, expression.method)],
+                    "args": arguments,
+                }
+            )
+            self.emit({"op": "jmp", "labels": [end_label]})
+            if next_label != end_label:
+                self.emit({"label": next_label})
+        self.emit({"label": end_label})
+        return result
 
     def _attribute_address(self, attribute: AttributeAccess) -> str:
         """Produz o endereco Bril de um slot de atributo."""
@@ -584,6 +729,9 @@ class BrilGenerator:
         if isinstance(expression, NewNode):
             return self._new_object(expression.type_name, expression_types)
 
+        if isinstance(expression, MethodCallNode):
+            return self._generate_method_call(expression, expression_types, environment)
+
         raise CodeGenerationError(
             f"Geracao Bril para '{type(expression).__name__}' ainda nao foi implementada"
         )
@@ -634,7 +782,10 @@ class BrilGenerator:
         self._start_function(
             self._method_name(class_name, method.name), arguments, self._bril_type(body_type)
         )
+        previous_class = self.current_class
+        self.current_class = class_name
         result = self._generate_expression(method.body, expression_types, environment)
+        self.current_class = previous_class
         if result is None:
             raise CodeGenerationError(
                 f"O metodo {class_name}.{method.name} nao produz um valor Bril"
@@ -667,13 +818,24 @@ class BrilGenerator:
         self._label_index = 0
         self.class_layouts = {}
         self.class_tags = {}
+        self.class_parents = {}
+        self._program_methods: dict[str, set[str]] = {}
         analysis: SemanticResult = analyze(program)
         if not analysis.success:
             raise CodeGenerationError("Nao e possivel gerar Bril para um programa semanticamente invalido")
         self._generate_string_runtime()
         self._build_class_layouts(program)
+        self._program_methods = {
+            class_node.name: {
+                feature.name
+                for feature in class_node.features
+                if isinstance(feature, MethodNode)
+            }
+            for class_node in program.classes
+        }
         self._generate_methods(program, analysis.expression_types)
         self._generate_entry_point()
+        self.current_class = "Main"
         self._generate_expression(self._main_method(program).body, analysis.expression_types, {})
         return {"functions": self.functions}
 
