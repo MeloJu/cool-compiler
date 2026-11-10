@@ -35,3 +35,15 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(exit_error.exception.code, 1)
         self.assertIn("Erro semantico na linha 1:", output.getvalue())
+
+    def test_modo_codegen_emite_programa_bril(self):
+        source = "class Main { main() : Object { self }; };"
+
+        with (
+            patch.object(sys, "argv", ["main.py", "codegen", "programa.cl"]),
+            patch("main._read_source", return_value=source),
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            main.main()
+
+        self.assertIn('"name": "main"', output.getvalue())

@@ -6,9 +6,12 @@ Uso:
     python main.py lex caminho/arquivo.cl
     python main.py parse caminho/arquivo.cl
     python main.py semantic caminho/arquivo.cl
+    python main.py codegen caminho/arquivo.cl
 """
+import json
 import sys
 
+from codegen import generate_bril
 from lexer import tokenize
 from parser import parse
 from semantic import analyze
@@ -20,7 +23,7 @@ def _read_source(path: str) -> str:
 
 
 def _print_usage() -> None:
-    print("uso: python main.py <lex|parse|semantic> <arquivo.cl>")
+    print("uso: python main.py <lex|parse|semantic|codegen> <arquivo.cl>")
 
 
 def main() -> None:
@@ -58,6 +61,23 @@ def main() -> None:
                 print(f"Erro semantico{location}: {error.message}")
             sys.exit(1)
         print("Analise semantica concluida com sucesso.")
+    elif mode == "codegen":
+        try:
+            program = parse(source)
+        except SyntaxError as exc:
+            print(exc)
+            sys.exit(1)
+
+        result = analyze(program)
+        if not result.success:
+            for error in result.errors:
+                location = (
+                    f" na linha {error.line}" if error.line is not None else ""
+                )
+                print(f"Erro semantico{location}: {error.message}")
+            sys.exit(1)
+
+        print(json.dumps(generate_bril(program), indent=2))
     else:
         _print_usage()
         sys.exit(1)
