@@ -61,3 +61,17 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(exit_error.exception.code, 1)
         self.assertIn("Erro na geracao de codigo:", output.getvalue())
+
+    def test_modo_codegen_grava_arquivo_bril_json(self):
+        source = "class Main { main() : Object { 1 + 2 }; };"
+        output_path = "programa.bril.json"
+        with (
+            patch.object(sys, "argv", ["main.py", "codegen", "programa.cl", output_path]),
+            patch("main._read_source", return_value=source),
+            patch("main.Path.write_text") as write_text,
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            main.main()
+
+        self.assertIn('"name": "main"', write_text.call_args.args[0])
+        self.assertIn("Codigo Bril gerado em:", output.getvalue())

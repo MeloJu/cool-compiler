@@ -6,10 +6,11 @@ Uso:
     python main.py lex caminho/arquivo.cl
     python main.py parse caminho/arquivo.cl
     python main.py semantic caminho/arquivo.cl
-    python main.py codegen caminho/arquivo.cl
+    python main.py codegen caminho/arquivo.cl [saida.bril.json]
 """
 import json
 import sys
+from pathlib import Path
 
 from codegen import CodeGenerationError, generate_bril
 from lexer import tokenize
@@ -23,16 +24,20 @@ def _read_source(path: str) -> str:
 
 
 def _print_usage() -> None:
-    print("uso: python main.py <lex|parse|semantic|codegen> <arquivo.cl>")
+    print("uso: python main.py <lex|parse|semantic|codegen> <arquivo.cl> [saida.bril.json]")
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in {3, 4}:
         _print_usage()
         sys.exit(1)
 
     mode = sys.argv[1]
     path = sys.argv[2]
+    output_path = sys.argv[3] if len(sys.argv) == 4 else None
+    if output_path is not None and mode != "codegen":
+        _print_usage()
+        sys.exit(1)
     source = _read_source(path)
 
     if mode == "lex":
@@ -78,10 +83,15 @@ def main() -> None:
             sys.exit(1)
 
         try:
-            print(json.dumps(generate_bril(program), indent=2))
+            bril_json = json.dumps(generate_bril(program), indent=2)
         except CodeGenerationError as exc:
             print(f"Erro na geracao de codigo: {exc}")
             sys.exit(1)
+        if output_path is None:
+            print(bril_json)
+        else:
+            Path(output_path).write_text(bril_json + "\n", encoding="utf-8")
+            print(f"Codigo Bril gerado em: {output_path}")
     else:
         _print_usage()
         sys.exit(1)

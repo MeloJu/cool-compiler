@@ -47,7 +47,9 @@ Saída (formato `#linha TOKEN valor`):
 lexer.py            # regras de tokens do PLY + wrapper tokenize(source)
 parser.py            # regras sintaticas e construcao da AST
 semantic.py          # regras da analise semantica
-main.py              # CLI: modos lex, parse e semantic
+main.py              # CLI: modos lex, parse, semantic e codegen
+codegen.py           # gerador de codigo Bril
+run_bril.py          # executor de arquivos Bril via brilirs
 READMESEMANTICO.md   # explicacao da etapa semantica
 requirements.txt     # dependência única: ply
 examples/            # programas COOL de exemplo
@@ -128,10 +130,32 @@ python -m unittest discover -s tests -v
 python main.py lex examples/hello_world.cl
 python main.py parse examples/hello_world.cl
 python main.py semantic examples/hello_world.cl
+python main.py codegen examples/hello_world.cl programa.bril.json
+python run_bril.py programa.bril.json
 ```
 
 O modo `semantic` exige um programa COOL completo: uma classe `Main` com o
 metodo local `main()` sem parametros.
+
+## Geração e execução de código Bril
+
+O modo `codegen` primeiro valida a sintaxe e a semântica do programa COOL e,
+depois, produz o JSON canônico do Bril. Sem o terceiro argumento, o JSON é
+mostrado no terminal; com ele, é salvo no arquivo indicado:
+
+```bash
+python main.py codegen examples/hello_world.cl programa.bril.json
+```
+
+Para executar o resultado, instale o interpretador `brilirs` (ele requer
+Rust) e rode:
+
+```bash
+python run_bril.py programa.bril.json
+```
+
+O gerador utiliza as extensões de memória e caracteres do Bril para os
+objetos e para o runtime de `String`.
 
 ## Próximas etapas
 
