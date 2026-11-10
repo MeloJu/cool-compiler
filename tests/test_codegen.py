@@ -62,6 +62,38 @@ class TestCodegenBase(unittest.TestCase):
         self.assertIn("alloc", string_operations)
         self.assertIn("store", string_operations)
 
+    def test_gera_if_com_desvio_e_resultado(self):
+        program = parse(
+            "class Main { main() : Object { if true then 1 else 2 fi }; };"
+        )
+
+        bril = generate_bril(program)
+        instructions = bril["functions"][-1]["instrs"]
+
+        self.assertIn("br", [instruction.get("op") for instruction in instructions])
+        self.assertIn("jmp", [instruction.get("op") for instruction in instructions])
+        self.assertTrue(any(instruction.get("label", "").startswith("if_then") for instruction in instructions))
+
+    def test_gera_let_bloco_atribuicao_e_while(self):
+        program = parse(
+            "class Main { main() : Object { let x : Int <- 1 in { "
+            "x <- x + 2; while false loop 0 pool; x; } }; };"
+        )
+
+        bril = generate_bril(program)
+        instructions = bril["functions"][-1]["instrs"]
+        operations = [instruction.get("op") for instruction in instructions]
+
+        self.assertIn("add", operations)
+        self.assertIn("id", operations)
+        self.assertIn("br", operations)
+        self.assertTrue(
+            any(
+                instruction.get("label", "").startswith("while_condition")
+                for instruction in instructions
+            )
+        )
+
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
 

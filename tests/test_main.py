@@ -49,7 +49,7 @@ class TestCli(unittest.TestCase):
         self.assertIn('"name": "main"', output.getvalue())
 
     def test_modo_codegen_informa_recurso_ainda_nao_implementado(self):
-        source = "class Main { main() : Object { if true then 1 else 2 fi }; };"
+        source = "class Main { main() : Object { new Object }; };"
 
         with (
             patch.object(sys, "argv", ["main.py", "codegen", "programa.cl"]),

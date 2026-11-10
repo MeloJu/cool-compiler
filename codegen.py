@@ -1,6 +1,18 @@
 """Geracao de programas Bril a partir da AST de COOL."""
 
-from ast_nodes import AssignNode, BinaryOpNode, LiteralNode, MethodNode, ProgramNode, UnaryOpNode, VariableNode
+from ast_nodes import (
+    AssignNode,
+    BinaryOpNode,
+    BlockNode,
+    IfNode,
+    LetNode,
+    LiteralNode,
+    MethodNode,
+    ProgramNode,
+    UnaryOpNode,
+    VariableNode,
+    WhileNode,
+)
 from semantic import SemanticResult, analyze
 
 
@@ -271,7 +283,7 @@ class BrilGenerator:
         expression: object,
         expression_types: dict[int, str],
         environment: dict[str, str],
-    ) -> str:
+    ) -> str | None:
         """Traduz uma expressao basica e devolve o registrador com seu valor."""
         if isinstance(expression, LiteralNode):
             if expression.type_name == "String":
@@ -322,6 +334,8 @@ class BrilGenerator:
 
         if isinstance(expression, UnaryOpNode):
             operand = self._generate_expression(expression.operand, expression_types, environment)
+            if operand is None:
+                raise CodeGenerationError("Operando sem valor em uma operacao unaria")
             result = self.new_temporary()
             if expression.operator == "not":
                 self.emit({"op": "not", "dest": result, "type": "bool", "args": [operand]})
@@ -335,6 +349,114 @@ class BrilGenerator:
                 self.emit({"op": "const", "dest": result, "type": "bool", "value": False})
                 return result
             raise CodeGenerationError(f"Operador '{expression.operator}' nao suportado")
+
+        if isinstance(expression, BlockNode):
+            value: str | None = None
+            for item in expression.expressions:
+                value = self._generate_expression(item, expression_types, environment)
+            return value
+
+        if isinstance(expression, LetNode):
+            local_environment = environment.copy()
+            for binding in expression.bindings:
+                variable = self.new_temporary()
+                local_environment[binding.name] = variable
+                if binding.init is not None:
+                    initial_value = self._generate_expression(
+                        binding.init, expression_types, local_environment
+                    )
+                    if initial_value is None:
+                        raise CodeGenerationError("Inicializacao de let sem valor")
+                    self.emit(
+                        {
+                            "op": "id",
+                            "dest": variable,
+                            "type": self._bril_type(binding.type_name),
+                            "args": [initial_value],
+                        }
+                    )
+                    continue
+
+                if binding.type_name == "Int":
+                    default_value: object = 0
+                elif binding.type_name == "Bool":
+                    default_value = False
+                elif binding.type_name == "String":
+                    default_string = self._generate_string_literal("")
+                    self.emit(
+                        {
+                            "op": "id",
+                            "dest": variable,
+                            "type": self._string_pointer_type(),
+                            "args": [default_string],
+                        }
+                    )
+                    continue
+                else:
+                    raise CodeGenerationError(
+                        f"Valor padrao de let para '{binding.type_name}' ainda nao foi implementado"
+                    )
+                self.emit(
+                    {
+                        "op": "const",
+                        "dest": variable,
+                        "type": self._bril_type(binding.type_name),
+                        "value": default_value,
+                    }
+                )
+            return self._generate_expression(
+                expression.body, expression_types, local_environment
+            )
+
+        if isinstance(expression, IfNode):
+            condition = self._generate_expression(
+                expression.condition, expression_types, environment
+            )
+            if condition is None:
+                raise CodeGenerationError("Condicao de if sem valor")
+            then_label = self.new_label("if_then")
+            else_label = self.new_label("if_else")
+            end_label = self.new_label("if_end")
+            result_type = expression_types.get(id(expression))
+            if result_type is None:
+                raise CodeGenerationError("Tipo ausente para um if COOL")
+            result = self.new_temporary()
+            bril_type = self._bril_type(result_type)
+            self.emit({"op": "br", "args": [condition], "labels": [then_label, else_label]})
+            self.emit({"label": then_label})
+            then_value = self._generate_expression(
+                expression.then_expr, expression_types, environment.copy()
+            )
+            if then_value is None:
+                raise CodeGenerationError("Ramo then sem valor")
+            self.emit({"op": "id", "dest": result, "type": bril_type, "args": [then_value]})
+            self.emit({"op": "jmp", "labels": [end_label]})
+            self.emit({"label": else_label})
+            else_value = self._generate_expression(
+                expression.else_expr, expression_types, environment.copy()
+            )
+            if else_value is None:
+                raise CodeGenerationError("Ramo else sem valor")
+            self.emit({"op": "id", "dest": result, "type": bril_type, "args": [else_value]})
+            self.emit({"label": end_label})
+            return result
+
+        if isinstance(expression, WhileNode):
+            condition_label = self.new_label("while_condition")
+            body_label = self.new_label("while_body")
+            end_label = self.new_label("while_end")
+            self.emit({"label": condition_label})
+            condition = self._generate_expression(
+                expression.condition, expression_types, environment
+            )
+            if condition is None:
+                raise CodeGenerationError("Condicao de while sem valor")
+            self.emit({"op": "br", "args": [condition], "labels": [body_label, end_label]})
+            self.emit({"label": body_label})
+            self._generate_expression(expression.body, expression_types, environment.copy())
+            self.emit({"op": "jmp", "labels": [condition_label]})
+            self.emit({"label": end_label})
+            return None
 
         raise CodeGenerationError(
             f"Geracao Bril para '{type(expression).__name__}' ainda nao foi implementada"
