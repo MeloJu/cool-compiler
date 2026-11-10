@@ -1,13 +1,17 @@
 """Geracao de programas Bril a partir da AST de COOL."""
 
+from dataclasses import dataclass
+
 from ast_nodes import (
     AssignNode,
+    AttributeNode,
     BinaryOpNode,
     BlockNode,
     IfNode,
     LetNode,
     LiteralNode,
     MethodNode,
+    NewNode,
     ProgramNode,
     UnaryOpNode,
     VariableNode,
@@ -20,6 +24,15 @@ class CodeGenerationError(Exception):
     """Indica que uma construcao COOL ainda nao possui traducao para Bril."""
 
 
+@dataclass(frozen=True)
+class AttributeAccess:
+    """Localizacao de um atributo dentro de um objeto COOL em memoria."""
+
+    object_register: str
+    slot: int
+    type_name: str
+
+
 class BrilGenerator:
     """Monta um programa Bril e controla nomes temporarios e labels."""
 
@@ -28,6 +41,8 @@ class BrilGenerator:
         self.instructions: list[dict] = []
         self._temporary_index = 0
         self._label_index = 0
+        self.class_layouts: dict[str, dict[str, tuple[int, str, AttributeNode]]] = {}
+        self.class_tags: dict[str, int] = {}
 
     def new_temporary(self) -> str:
         """Devolve um nome unico para um valor intermediario em Bril."""
@@ -249,11 +264,113 @@ class BrilGenerator:
     def _bril_type(cool_type: str) -> object:
         """Converte os tipos basicos de COOL para os tipos do Bril."""
         basic_types = {"Int": "int", "Bool": "bool", "String": {"ptr": "int"}}
-        if cool_type not in basic_types:
+        return basic_types.get(cool_type, {"ptr": "int"})
+
+    def _build_class_layouts(self, program: ProgramNode) -> None:
+        """Define o slot de cada atributo, preservando a ordem da heranca."""
+        classes = {class_node.name: class_node for class_node in program.classes}
+        built: set[str] = set()
+
+        def build(class_name: str) -> None:
+            if class_name in built or class_name not in classes:
+                return
+            class_node = classes[class_name]
+            if class_node.parent in classes:
+                build(class_node.parent)
+            parent_layout = self.class_layouts.get(class_node.parent, {})
+            layout = parent_layout.copy()
+            for feature in class_node.features:
+                if isinstance(feature, AttributeNode):
+                    layout[feature.name] = (len(layout) + 1, feature.type_name, feature)
+            self.class_layouts[class_name] = layout
+            self.class_tags[class_name] = len(self.class_tags) + 1
+            built.add(class_name)
+
+        for class_node in program.classes:
+            build(class_node.name)
+
+    def _attribute_address(self, attribute: AttributeAccess) -> str:
+        """Produz o endereco Bril de um slot de atributo."""
+        position = self.new_temporary()
+        address = self.new_temporary()
+        self.emit({"op": "const", "dest": position, "type": "int", "value": attribute.slot})
+        self.emit(
+            {
+                "op": "ptradd",
+                "dest": address,
+                "type": {"ptr": "int"},
+                "args": [attribute.object_register, position],
+            }
+        )
+        return address
+
+    def _read_attribute(self, attribute: AttributeAccess) -> str:
+        """Carrega um atributo basico do objeto atual."""
+        if attribute.type_name not in {"Int", "Bool"}:
             raise CodeGenerationError(
-                f"A geracao de codigo para o tipo '{cool_type}' ainda nao foi implementada"
+                f"Atributos do tipo '{attribute.type_name}' serao suportados no runtime completo"
             )
-        return basic_types[cool_type]
+        address = self._attribute_address(attribute)
+        result = self.new_temporary()
+        self.emit(
+            {
+                "op": "load",
+                "dest": result,
+                "type": self._bril_type(attribute.type_name),
+                "args": [address],
+            }
+        )
+        return result
+
+    def _write_attribute(self, attribute: AttributeAccess, value: str) -> None:
+        """Armazena um valor basico em um atributo do objeto atual."""
+        if attribute.type_name not in {"Int", "Bool"}:
+            raise CodeGenerationError(
+                f"Atributos do tipo '{attribute.type_name}' serao suportados no runtime completo"
+            )
+        self.emit({"op": "store", "args": [self._attribute_address(attribute), value]})
+
+    def _new_object(self, type_name: str, expression_types: dict[int, str]) -> str:
+        """Aloca uma instancia e executa as inicializacoes de seus atributos."""
+        if type_name not in self.class_layouts:
+            raise CodeGenerationError(f"Instanciacao de '{type_name}' ainda nao foi implementada")
+        layout = self.class_layouts[type_name]
+        object_register = self.new_temporary()
+        size = self.new_temporary()
+        self.emit({"op": "const", "dest": size, "type": "int", "value": len(layout) + 1})
+        self.emit({"op": "alloc", "dest": object_register, "type": {"ptr": "int"}, "args": [size]})
+        tag_position = self.new_temporary()
+        tag_address = self.new_temporary()
+        tag_value = self.new_temporary()
+        self.emit({"op": "const", "dest": tag_position, "type": "int", "value": 0})
+        self.emit({"op": "ptradd", "dest": tag_address, "type": {"ptr": "int"}, "args": [object_register, tag_position]})
+        self.emit({"op": "const", "dest": tag_value, "type": "int", "value": self.class_tags[type_name]})
+        self.emit({"op": "store", "args": [tag_address, tag_value]})
+
+        environment: dict[str, str | AttributeAccess] = {"self": object_register}
+        for name, (slot, attribute_type, _) in layout.items():
+            environment[name] = AttributeAccess(object_register, slot, attribute_type)
+        for _, (_, attribute_type, attribute) in layout.items():
+            access = environment[attribute.name]
+            assert isinstance(access, AttributeAccess)
+            if attribute_type == "Int":
+                default = self.new_temporary()
+                self.emit({"op": "const", "dest": default, "type": "int", "value": 0})
+                self._write_attribute(access, default)
+            elif attribute_type == "Bool":
+                default = self.new_temporary()
+                self.emit({"op": "const", "dest": default, "type": "bool", "value": False})
+                self._write_attribute(access, default)
+            else:
+                raise CodeGenerationError(
+                    f"Atributos do tipo '{attribute_type}' serao suportados no runtime completo"
+                )
+            if attribute.init is not None:
+                value = self._generate_expression(attribute.init, expression_types, environment)
+                if value is None:
+                    raise CodeGenerationError("Inicializacao de atributo sem valor")
+                self._write_attribute(access, value)
+        return object_register
 
     def _generate_string_literal(self, value: str) -> str:
         """Aloca os caracteres UTF-8 basicos de uma string e seu terminador."""
@@ -282,7 +399,7 @@ class BrilGenerator:
         self,
         expression: object,
         expression_types: dict[int, str],
-        environment: dict[str, str],
+        environment: dict[str, str | AttributeAccess],
     ) -> str | None:
         """Traduz uma expressao basica e devolve o registrador com seu valor."""
         if isinstance(expression, LiteralNode):
@@ -304,7 +421,10 @@ class BrilGenerator:
                 raise CodeGenerationError(
                     f"A variavel '{expression.name}' ainda nao pode ser usada na geracao Bril"
                 )
-            return environment[expression.name]
+            value = environment[expression.name]
+            if isinstance(value, AttributeAccess):
+                return self._read_attribute(value)
+            return value
 
         if isinstance(expression, AssignNode):
             value = self._generate_expression(expression.value, expression_types, environment)
@@ -316,6 +436,9 @@ class BrilGenerator:
             value_type = expression_types.get(id(expression.value))
             if value_type is None:
                 raise CodeGenerationError("Tipo ausente para uma atribuicao COOL")
+            if isinstance(target, AttributeAccess):
+                self._write_attribute(target, value)
+                return value
             self.emit({"op": "id", "dest": target, "type": self._bril_type(value_type), "args": [value]})
             return target
 
@@ -458,6 +581,9 @@ class BrilGenerator:
             self.emit({"label": end_label})
             return None
 
+        if isinstance(expression, NewNode):
+            return self._new_object(expression.type_name, expression_types)
+
         raise CodeGenerationError(
             f"Geracao Bril para '{type(expression).__name__}' ainda nao foi implementada"
         )
@@ -485,7 +611,14 @@ class BrilGenerator:
     ) -> None:
         """Traduz um metodo COOL basico para uma funcao Bril com retorno."""
         arguments: list[dict] = []
-        environment: dict[str, str] = {}
+        environment: dict[str, str | AttributeAccess] = {}
+        self_register = self.new_temporary()
+        arguments.append({"name": self_register, "type": {"ptr": "int"}})
+        environment["self"] = self_register
+        for attribute_name, (slot, type_name, _) in self.class_layouts.get(
+            class_name, {}
+        ).items():
+            environment[attribute_name] = AttributeAccess(self_register, slot, type_name)
         for parameter in method.params:
             argument_name = self.new_temporary()
             arguments.append(
@@ -532,10 +665,13 @@ class BrilGenerator:
         self.functions = []
         self._temporary_index = 0
         self._label_index = 0
+        self.class_layouts = {}
+        self.class_tags = {}
         analysis: SemanticResult = analyze(program)
         if not analysis.success:
             raise CodeGenerationError("Nao e possivel gerar Bril para um programa semanticamente invalido")
         self._generate_string_runtime()
+        self._build_class_layouts(program)
         self._generate_methods(program, analysis.expression_types)
         self._generate_entry_point()
         self._generate_expression(self._main_method(program).body, analysis.expression_types, {})

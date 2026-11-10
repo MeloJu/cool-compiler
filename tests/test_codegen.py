@@ -103,10 +103,26 @@ class TestCodegenBase(unittest.TestCase):
         bril = generate_bril(program)
         method = next(function for function in bril["functions"] if function["name"] == "Main__dobro")
 
-        self.assertEqual(method["args"][0]["type"], "int")
+        self.assertEqual(method["args"][0]["type"], {"ptr": "int"})
+        self.assertEqual(method["args"][1]["type"], "int")
         self.assertEqual(method["type"], "int")
         self.assertIn("add", [instruction.get("op") for instruction in method["instrs"]])
         self.assertEqual(method["instrs"][-1]["op"], "ret")
+
+    def test_gera_objeto_com_tag_e_atributos_na_memoria(self):
+        program = parse(
+            "class Point { x : Int <- 1; ativo : Bool; "
+            "valor() : Int { x }; }; "
+            "class Main { main() : Object { new Point }; };"
+        )
+
+        bril = generate_bril(program)
+        main = bril["functions"][-1]
+        method = next(function for function in bril["functions"] if function["name"] == "Point__valor")
+
+        self.assertIn("alloc", [instruction.get("op") for instruction in main["instrs"]])
+        self.assertIn("store", [instruction.get("op") for instruction in main["instrs"]])
+        self.assertIn("load", [instruction.get("op") for instruction in method["instrs"]])
 
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
