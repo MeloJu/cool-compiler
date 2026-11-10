@@ -15,7 +15,33 @@ class TestCodegenBase(unittest.TestCase):
 
         bril = generate_bril(program)
 
-        self.assertEqual(bril, {"functions": [{"name": "main", "instrs": []}]})
+        self.assertEqual(
+            [function["name"] for function in bril["functions"]],
+            [
+                "__cool_string_length",
+                "__cool_string_concat",
+                "__cool_string_substr",
+                "main",
+            ],
+        )
+        self.assertEqual(bril["functions"][-1], {"name": "main", "instrs": []})
+
+    def test_runtime_de_string_usa_memoria_e_terminador_zero(self):
+        program = parse("class Main { main() : Object { self }; };")
+
+        bril = generate_bril(program)
+        runtime = bril["functions"][:3]
+        instructions = [instruction for function in runtime for instruction in function["instrs"]]
+
+        self.assertTrue(any(instruction.get("op") == "alloc" for instruction in instructions))
+        self.assertTrue(any(instruction.get("op") == "load" for instruction in instructions))
+        self.assertTrue(any(instruction.get("op") == "store" for instruction in instructions))
+        self.assertTrue(
+            any(
+                instruction.get("op") == "const" and instruction.get("value") == 0
+                for instruction in instructions
+            )
+        )
 
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()
