@@ -11,7 +11,7 @@ from parser import parse
 
 class TestCodegenBase(unittest.TestCase):
     def test_gera_programa_bril_com_funcao_main(self):
-        program = parse("class Main { main() : Object { self }; };")
+        program = parse("class Main { main() : Object { 1 + 2 }; };")
 
         bril = generate_bril(program)
 
@@ -24,10 +24,13 @@ class TestCodegenBase(unittest.TestCase):
                 "main",
             ],
         )
-        self.assertEqual(bril["functions"][-1], {"name": "main", "instrs": []})
+        self.assertEqual(bril["functions"][-1]["name"], "main")
+        self.assertIn(
+            "add", [instruction.get("op") for instruction in bril["functions"][-1]["instrs"]]
+        )
 
     def test_runtime_de_string_usa_memoria_e_terminador_zero(self):
-        program = parse("class Main { main() : Object { self }; };")
+        program = parse("class Main { main() : Object { 0 }; };")
 
         bril = generate_bril(program)
         runtime = bril["functions"][:3]
@@ -42,6 +45,22 @@ class TestCodegenBase(unittest.TestCase):
                 for instruction in instructions
             )
         )
+
+    def test_gera_string_e_operadores_basicos(self):
+        program = parse('class Main { main() : Object { not false }; };')
+
+        bril = generate_bril(program)
+        operations = [instruction.get("op") for instruction in bril["functions"][-1]["instrs"]]
+
+        self.assertEqual(operations, ["const", "not"])
+
+        string_program = parse('class Main { main() : Object { "oi" }; };')
+        string_bril = generate_bril(string_program)
+        string_operations = [
+            instruction.get("op") for instruction in string_bril["functions"][-1]["instrs"]
+        ]
+        self.assertIn("alloc", string_operations)
+        self.assertIn("store", string_operations)
 
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()

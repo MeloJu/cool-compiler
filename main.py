@@ -11,7 +11,7 @@ Uso:
 import json
 import sys
 
-from codegen import generate_bril
+from codegen import CodeGenerationError, generate_bril
 from lexer import tokenize
 from parser import parse
 from semantic import analyze
@@ -77,7 +77,11 @@ def main() -> None:
                 print(f"Erro semantico{location}: {error.message}")
             sys.exit(1)
 
-        print(json.dumps(generate_bril(program), indent=2))
+        try:
+            print(json.dumps(generate_bril(program), indent=2))
+        except CodeGenerationError as exc:
+            print(f"Erro na geracao de codigo: {exc}")
+            sys.exit(1)
     else:
         _print_usage()
         sys.exit(1)

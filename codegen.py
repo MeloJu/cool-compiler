@@ -1,6 +1,11 @@
-"""Infraestrutura para gerar programas Bril a partir da AST de COOL."""
+"""Geracao de programas Bril a partir da AST de COOL."""
 
-from ast_nodes import ProgramNode
+from ast_nodes import AssignNode, BinaryOpNode, LiteralNode, MethodNode, ProgramNode, UnaryOpNode, VariableNode
+from semantic import SemanticResult, analyze
+
+
+class CodeGenerationError(Exception):
+    """Indica que uma construcao COOL ainda nao possui traducao para Bril."""
 
 
 class BrilGenerator:
@@ -228,6 +233,123 @@ class BrilGenerator:
         self._generate_string_concat()
         self._generate_string_substr()
 
+    @staticmethod
+    def _bril_type(cool_type: str) -> object:
+        """Converte os tipos basicos de COOL para os tipos do Bril."""
+        basic_types = {"Int": "int", "Bool": "bool", "String": {"ptr": "int"}}
+        if cool_type not in basic_types:
+            raise CodeGenerationError(
+                f"A geracao de codigo para o tipo '{cool_type}' ainda nao foi implementada"
+            )
+        return basic_types[cool_type]
+
+    def _generate_string_literal(self, value: str) -> str:
+        """Aloca os caracteres UTF-8 basicos de uma string e seu terminador."""
+        result = self.new_temporary()
+        size = self.new_temporary()
+        self.emit({"op": "const", "dest": size, "type": "int", "value": len(value) + 1})
+        self.emit({"op": "alloc", "dest": result, "type": self._string_pointer_type(), "args": [size]})
+        for index, character in enumerate(value):
+            position = self.new_temporary()
+            address = self.new_temporary()
+            code = self.new_temporary()
+            self.emit({"op": "const", "dest": position, "type": "int", "value": index})
+            self.emit({"op": "ptradd", "dest": address, "type": self._string_pointer_type(), "args": [result, position]})
+            self.emit({"op": "const", "dest": code, "type": "int", "value": ord(character)})
+            self.emit({"op": "store", "args": [address, code]})
+        terminator_position = self.new_temporary()
+        terminator_address = self.new_temporary()
+        zero = self.new_temporary()
+        self.emit({"op": "const", "dest": terminator_position, "type": "int", "value": len(value)})
+        self.emit({"op": "ptradd", "dest": terminator_address, "type": self._string_pointer_type(), "args": [result, terminator_position]})
+        self.emit({"op": "const", "dest": zero, "type": "int", "value": 0})
+        self.emit({"op": "store", "args": [terminator_address, zero]})
+        return result
+
+    def _generate_expression(
+        self,
+        expression: object,
+        expression_types: dict[int, str],
+        environment: dict[str, str],
+    ) -> str:
+        """Traduz uma expressao basica e devolve o registrador com seu valor."""
+        if isinstance(expression, LiteralNode):
+            if expression.type_name == "String":
+                return self._generate_string_literal(expression.value)
+            result = self.new_temporary()
+            self.emit(
+                {
+                    "op": "const",
+                    "dest": result,
+                    "type": self._bril_type(expression.type_name),
+                    "value": expression.value,
+                }
+            )
+            return result
+
+        if isinstance(expression, VariableNode):
+            if expression.name not in environment:
+                raise CodeGenerationError(
+                    f"A variavel '{expression.name}' ainda nao pode ser usada na geracao Bril"
+                )
+            return environment[expression.name]
+
+        if isinstance(expression, AssignNode):
+            value = self._generate_expression(expression.value, expression_types, environment)
+            target = environment.get(expression.name)
+            if target is None:
+                raise CodeGenerationError(
+                    f"A atribuicao a '{expression.name}' ainda nao pode ser gerada"
+                )
+            value_type = expression_types.get(id(expression.value))
+            if value_type is None:
+                raise CodeGenerationError("Tipo ausente para uma atribuicao COOL")
+            self.emit({"op": "id", "dest": target, "type": self._bril_type(value_type), "args": [value]})
+            return target
+
+        if isinstance(expression, BinaryOpNode):
+            left = self._generate_expression(expression.left, expression_types, environment)
+            right = self._generate_expression(expression.right, expression_types, environment)
+            operation = {"+": "add", "-": "sub", "*": "mul", "/": "div", "<": "lt", "<=": "le", "=": "eq"}.get(expression.operator)
+            if operation is None:
+                raise CodeGenerationError(f"Operador '{expression.operator}' nao suportado")
+            result_type = expression_types.get(id(expression))
+            if result_type is None:
+                raise CodeGenerationError("Tipo ausente para uma operacao COOL")
+            result = self.new_temporary()
+            self.emit({"op": operation, "dest": result, "type": self._bril_type(result_type), "args": [left, right]})
+            return result
+
+        if isinstance(expression, UnaryOpNode):
+            operand = self._generate_expression(expression.operand, expression_types, environment)
+            result = self.new_temporary()
+            if expression.operator == "not":
+                self.emit({"op": "not", "dest": result, "type": "bool", "args": [operand]})
+                return result
+            if expression.operator == "~":
+                zero = self.new_temporary()
+                self.emit({"op": "const", "dest": zero, "type": "int", "value": 0})
+                self.emit({"op": "sub", "dest": result, "type": "int", "args": [zero, operand]})
+                return result
+            if expression.operator == "isvoid":
+                self.emit({"op": "const", "dest": result, "type": "bool", "value": False})
+                return result
+            raise CodeGenerationError(f"Operador '{expression.operator}' nao suportado")
+
+        raise CodeGenerationError(
+            f"Geracao Bril para '{type(expression).__name__}' ainda nao foi implementada"
+        )
+
+    @staticmethod
+    def _main_method(program: ProgramNode) -> MethodNode:
+        """Localiza o corpo de Main.main, ponto inicial desta primeira traducao."""
+        for class_node in program.classes:
+            if class_node.name == "Main":
+                for feature in class_node.features:
+                    if isinstance(feature, MethodNode) and feature.name == "main":
+                        return feature
+        raise CodeGenerationError("Metodo Main.main nao encontrado")
+
     def generate(self, program: ProgramNode) -> dict:
         """Gera a estrutura JSON inicial de um programa Bril.
 
@@ -242,6 +364,10 @@ class BrilGenerator:
         self._label_index = 0
         self._generate_string_runtime()
         self._generate_entry_point()
+        analysis: SemanticResult = analyze(program)
+        if not analysis.success:
+            raise CodeGenerationError("Nao e possivel gerar Bril para um programa semanticamente invalido")
+        self._generate_expression(self._main_method(program).body, analysis.expression_types, {})
         return {"functions": self.functions}
 
 
