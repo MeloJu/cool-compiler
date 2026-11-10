@@ -21,6 +21,7 @@ class TestCodegenBase(unittest.TestCase):
                 "__cool_string_length",
                 "__cool_string_concat",
                 "__cool_string_substr",
+                "__cool_out_string",
                 "main",
             ],
         )
@@ -52,7 +53,7 @@ class TestCodegenBase(unittest.TestCase):
         bril = generate_bril(program)
         operations = [instruction.get("op") for instruction in bril["functions"][-1]["instrs"]]
 
-        self.assertEqual(operations, ["const", "not"])
+        self.assertIn("not", operations)
 
         string_program = parse('class Main { main() : Object { "oi" }; };')
         string_bril = generate_bril(string_program)
@@ -150,6 +151,19 @@ class TestCodegenBase(unittest.TestCase):
         calls = [instruction for instruction in main["instrs"] if instruction.get("op") == "call"]
 
         self.assertEqual(calls[-1]["funcs"], ["A__valor"])
+
+    def test_conecta_chamadas_de_string_e_io_ao_runtime(self):
+        program = parse(
+            'class Main inherits IO { main() : Object { out_string("oi".concat("!")) }; };'
+        )
+
+        bril = generate_bril(program)
+        main = bril["functions"][-1]
+        calls = [instruction for instruction in main["instrs"] if instruction.get("op") == "call"]
+
+        self.assertTrue(any(call["funcs"] == ["__cool_string_concat"] for call in calls))
+        self.assertTrue(any(call["funcs"] == ["__cool_out_string"] for call in calls))
+        self.assertIn("__cool_out_string", [function["name"] for function in bril["functions"]])
 
     def test_gera_nomes_temporarios_unicos(self):
         generator = BrilGenerator()

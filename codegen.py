@@ -45,6 +45,7 @@ class BrilGenerator:
         self.class_layouts: dict[str, dict[str, tuple[int, str, AttributeNode]]] = {}
         self.class_tags: dict[str, int] = {}
         self.class_parents: dict[str, str] = {}
+        self.known_parents: dict[str, str | None] = {}
         self.current_class = "Main"
 
     def new_temporary(self) -> str:
@@ -262,6 +263,32 @@ class BrilGenerator:
         self._generate_string_length()
         self._generate_string_concat()
         self._generate_string_substr()
+        self._generate_string_output()
+
+    def _generate_string_output(self) -> None:
+        """Gera __cool_out_string, que imprime os caracteres ate o zero final."""
+        string_type = self._string_pointer_type()
+        self._start_function(
+            "__cool_out_string", [{"name": "text", "type": string_type}]
+        )
+        loop = self.new_label("string_output_loop")
+        print_label = self.new_label("string_output_print")
+        end = self.new_label("string_output_end")
+        self.emit({"op": "const", "dest": "index", "type": "int", "value": 0})
+        self.emit({"label": loop})
+        self.emit({"op": "ptradd", "dest": "address", "type": string_type, "args": ["text", "index"]})
+        self.emit({"op": "load", "dest": "code", "type": "int", "args": ["address"]})
+        self.emit({"op": "const", "dest": "zero", "type": "int", "value": 0})
+        self.emit({"op": "eq", "dest": "finished", "type": "bool", "args": ["code", "zero"]})
+        self.emit({"op": "br", "args": ["finished"], "labels": [end, print_label]})
+        self.emit({"label": print_label})
+        self.emit({"op": "int2char", "dest": "character", "type": "char", "args": ["code"]})
+        self.emit({"op": "print", "args": ["character"]})
+        self.emit({"op": "const", "dest": "one", "type": "int", "value": 1})
+        self.emit({"op": "add", "dest": "index", "type": "int", "args": ["index", "one"]})
+        self.emit({"op": "jmp", "labels": [loop]})
+        self.emit({"label": end})
+        self.emit({"op": "ret", "args": []})
 
     @staticmethod
     def _bril_type(cool_type: str) -> object:
@@ -314,6 +341,60 @@ class BrilGenerator:
             current = self.class_parents.get(current)
         return None
 
+    def _native_method_owner(self, class_name: str, method_name: str) -> str | None:
+        """Localiza os metodos nativos herdados por uma classe do programa."""
+        native_methods = {
+            "IO": {"out_string", "out_int"},
+            "String": {"length", "concat", "substr"},
+        }
+        current: str | None = class_name
+        while current is not None:
+            if method_name in native_methods.get(current, set()):
+                return current
+            current = self.known_parents.get(current)
+        return None
+
+    def _emit_native_call(
+        self,
+        owner: str,
+        method: str,
+        receiver: str,
+        arguments: list[str],
+        result: str,
+        result_type: object,
+    ) -> None:
+        """Conecta metodos nativos de IO/String ao runtime Bril gerado."""
+        if owner == "String":
+            runtime_methods = {
+                "length": "__cool_string_length",
+                "concat": "__cool_string_concat",
+                "substr": "__cool_string_substr",
+            }
+            runtime_method = runtime_methods[method]
+            self.emit(
+                {
+                    "op": "call",
+                    "dest": result,
+                    "type": result_type,
+                    "funcs": [runtime_method],
+                    "args": [receiver, *arguments[1:]],
+                }
+            )
+            return
+        if method == "out_int":
+            self.emit({"op": "print", "args": [arguments[1]]})
+        elif method == "out_string":
+            self.emit(
+                {
+                    "op": "call",
+                    "funcs": ["__cool_out_string"],
+                    "args": [arguments[1]],
+                }
+            )
+        else:
+            raise CodeGenerationError(f"Metodo nativo '{method}' ainda nao foi implementado")
+        self.emit({"op": "id", "dest": result, "type": result_type, "args": [receiver]})
+
     def _object_tag(self, object_register: str) -> str:
         """Carrega a tag dinamica guardada no primeiro slot do objeto."""
         position = self.new_temporary()
@@ -356,7 +437,7 @@ class BrilGenerator:
             raise CodeGenerationError("Tipo ausente para o receptor de uma chamada")
 
         dispatch_type = expression.static_type or receiver_type
-        if dispatch_type not in self.class_parents:
+        if dispatch_type not in self.known_parents:
             raise CodeGenerationError(
                 f"Chamada de metodo nativo '{dispatch_type}.{expression.method}' ainda nao foi implementada"
             )
@@ -375,21 +456,38 @@ class BrilGenerator:
             self.current_class if return_type == "SELF_TYPE" else return_type
         )
 
+        native_owner = self._native_method_owner(dispatch_type, expression.method)
+        if dispatch_type == "String" and native_owner is not None:
+            self._emit_native_call(
+                native_owner,
+                expression.method,
+                receiver,
+                arguments,
+                result,
+                result_bril_type,
+            )
+            return result
+
         if expression.static_type is not None:
             implementation = self._method_implementation(dispatch_type, expression.method)
             if implementation is None:
-                raise CodeGenerationError(
-                    f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                if native_owner is None:
+                    raise CodeGenerationError(
+                        f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                    )
+                self._emit_native_call(
+                    native_owner, expression.method, receiver, arguments, result, result_bril_type
                 )
-            self.emit(
-                {
-                    "op": "call",
-                    "dest": result,
-                    "type": result_bril_type,
-                    "funcs": [self._method_name(implementation, expression.method)],
-                    "args": arguments,
-                }
-            )
+            else:
+                self.emit(
+                    {
+                        "op": "call",
+                        "dest": result,
+                        "type": result_bril_type,
+                        "funcs": [self._method_name(implementation, expression.method)],
+                        "args": arguments,
+                    }
+                )
             return result
 
         tag = self._object_tag(receiver)
@@ -416,18 +514,24 @@ class BrilGenerator:
             self.emit({"label": call_label})
             implementation = self._method_implementation(candidate, expression.method)
             if implementation is None:
-                raise CodeGenerationError(
-                    f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                owner = self._native_method_owner(candidate, expression.method)
+                if owner is None:
+                    raise CodeGenerationError(
+                        f"Metodo '{expression.method}' ainda nao possui implementacao Bril"
+                    )
+                self._emit_native_call(
+                    owner, expression.method, receiver, arguments, result, result_bril_type
                 )
-            self.emit(
-                {
-                    "op": "call",
-                    "dest": result,
-                    "type": result_bril_type,
-                    "funcs": [self._method_name(implementation, expression.method)],
-                    "args": arguments,
-                }
-            )
+            else:
+                self.emit(
+                    {
+                        "op": "call",
+                        "dest": result,
+                        "type": result_bril_type,
+                        "funcs": [self._method_name(implementation, expression.method)],
+                        "args": arguments,
+                    }
+                )
             self.emit({"op": "jmp", "labels": [end_label]})
             if next_label != end_label:
                 self.emit({"label": next_label})
@@ -819,12 +923,17 @@ class BrilGenerator:
         self.class_layouts = {}
         self.class_tags = {}
         self.class_parents = {}
+        self.known_parents = {}
         self._program_methods: dict[str, set[str]] = {}
         analysis: SemanticResult = analyze(program)
         if not analysis.success:
             raise CodeGenerationError("Nao e possivel gerar Bril para um programa semanticamente invalido")
         self._generate_string_runtime()
         self._build_class_layouts(program)
+        self.known_parents = {
+            class_name: class_info.parent
+            for class_name, class_info in analysis.class_table.items()
+        }
         self._program_methods = {
             class_node.name: {
                 feature.name
@@ -836,7 +945,13 @@ class BrilGenerator:
         self._generate_methods(program, analysis.expression_types)
         self._generate_entry_point()
         self.current_class = "Main"
-        self._generate_expression(self._main_method(program).body, analysis.expression_types, {})
+        main_self = self._new_object("Main", analysis.expression_types)
+        main_environment: dict[str, str | AttributeAccess] = {"self": main_self}
+        for name, (slot, type_name, _) in self.class_layouts["Main"].items():
+            main_environment[name] = AttributeAccess(main_self, slot, type_name)
+        self._generate_expression(
+            self._main_method(program).body, analysis.expression_types, main_environment
+        )
         return {"functions": self.functions}
 
 
