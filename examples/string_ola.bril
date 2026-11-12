@@ -1,0 +1,23 @@
+@main {
+  tamanho: int = const 3;
+  texto: ptr<int> = alloc tamanho;
+  posicao0: int = const 0;
+  endereco0: ptr<int> = ptradd texto posicao0;
+  letra_o: int = const 79;
+  store endereco0 letra_o;
+  posicao1: int = const 1;
+  endereco1: ptr<int> = ptradd texto posicao1;
+  letra_i: int = const 105;
+  store endereco1 letra_i;
+  fim: int = const 2;
+  endereco_fim: ptr<int> = ptradd texto fim;
+  nulo: int = const 0;
+  store endereco_fim nulo;
+  codigo0: int = load endereco0;
+  caractere0: char = int2char codigo0;
+  print caractere0;
+  codigo1: int = load endereco1;
+  caractere1: char = int2char codigo1;
+  print caractere1;
+  free texto;
+}

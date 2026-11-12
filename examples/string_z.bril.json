@@ -1,0 +1,19 @@
+{
+  "functions": [
+    {
+      "name": "main",
+      "instrs": [
+        { "op": "const", "dest": "tamanho", "type": "int", "value": 2 },
+        { "op": "alloc", "dest": "texto", "type": { "ptr": "int" }, "args": ["tamanho"] },
+        { "op": "const", "dest": "posicao", "type": "int", "value": 0 },
+        { "op": "ptradd", "dest": "endereco", "type": { "ptr": "int" }, "args": ["texto", "posicao"] },
+        { "op": "const", "dest": "codigo", "type": "int", "value": 90 },
+        { "op": "store", "args": ["endereco", "codigo"] },
+        { "op": "load", "dest": "codigo_lido", "type": "int", "args": ["endereco"] },
+        { "op": "int2char", "dest": "letra", "type": "char", "args": ["codigo_lido"] },
+        { "op": "print", "args": ["letra"] },
+        { "op": "free", "args": ["texto"] }
+      ]
+    }
+  ]
+}
