@@ -1,0 +1,13 @@
+{
+  "functions": [
+    {
+      "name": "main",
+      "instrs": [
+        { "op": "const", "dest": "esquerda", "type": "int", "value": 12 },
+        { "op": "const", "dest": "direita", "type": "int", "value": 30 },
+        { "op": "add", "dest": "resultado", "type": "int", "args": ["esquerda", "direita"] },
+        { "op": "print", "args": ["resultado"] }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "functions": [
+    {
+      "name": "main",
+      "instrs": [
+        { "op": "const", "dest": "numero", "type": "int", "value": 8 },
+        { "op": "const", "dest": "limite", "type": "int", "value": 8 },
+        { "op": "eq", "dest": "iguais", "type": "bool", "args": ["numero", "limite"] },
+        { "op": "print", "args": ["iguais"] }
+      ]
+    }
+  ]
+}

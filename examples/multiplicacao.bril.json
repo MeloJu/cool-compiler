@@ -1,0 +1,13 @@
+{
+  "functions": [
+    {
+      "name": "main",
+      "instrs": [
+        { "op": "const", "dest": "valor", "type": "int", "value": 6 },
+        { "op": "const", "dest": "fator", "type": "int", "value": 7 },
+        { "op": "mul", "dest": "produto", "type": "int", "args": ["valor", "fator"] },
+        { "op": "print", "args": ["produto"] }
+      ]
+    }
+  ]
+}

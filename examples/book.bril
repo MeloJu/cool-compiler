@@ -1,0 +1,47 @@
+@out_int_IO(this: int) {
+  print this;
+}
+@initBook_Book(this: ptr<int>, title_p: int, author_p: int): ptr<int> {
+  store this title_p;
+  inc: int = const 1;
+  this2: ptr<int> = ptradd this inc;
+  store this2 author_p;
+  ret this;
+}
+@print_Book(this: ptr<int>) : ptr<int> {
+  inc: int = const 0;
+  this1: ptr<int> = ptradd this inc;
+  v0: int = load this1;
+  call @out_int_IO v0;
+  inc: int = const 1;
+  this2: ptr<int> = ptradd this1 inc;
+  v1: int = load this2;
+  call @out_int_IO v1;
+  ret this;
+}
+@initArticle_Article(this: ptr<int>, title_p: int, author_p: int, per_title_p: int): ptr<int> {
+  this2: ptr<int> = call @initBook_Book this title_p author_p;
+  inc: int = const 2;
+  this3: ptr<int> = ptradd this2 inc;
+  store this3 per_title_p;
+  ret this;
+}
+@print_Article(this: ptr<int>) : ptr<int> {
+  aux: ptr<int> = call @print_Book this;
+  inc: int = const 2;
+  this2: ptr<int> = ptradd this inc;
+  v0: int = load this2;
+  call @out_int_IO v0;
+  ret this;
+}
+@main {
+  size_book: int = const 2;
+  size_article: int = const 3;
+  a_book: ptr<int> = alloc size_article;
+  p1: int = const 100;
+  p2: int = const 7;
+  p3: int = const 10;
+  a_book: ptr<int> = call @initArticle_Article a_book p1 p2 p3;
+  aux: ptr<int> = call @print_Article a_book;
+  free a_book;
+}

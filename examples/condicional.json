@@ -1,0 +1,21 @@
+{
+  "functions": [
+    {
+      "name": "main",
+      "instrs": [
+        { "op": "const", "dest": "a", "type": "int", "value": 10 },
+        { "op": "const", "dest": "b", "type": "int", "value": 5 },
+        { "op": "gt", "dest": "maior", "type": "bool", "args": ["a", "b"] },
+        { "op": "br", "args": ["maior"], "labels": ["entao", "senao"] },
+        { "label": "entao" },
+        { "op": "const", "dest": "saida1", "type": "int", "value": 1 },
+        { "op": "print", "args": ["saida1"] },
+        { "op": "jmp", "labels": ["fim"] },
+        { "label": "senao" },
+        { "op": "const", "dest": "saida2", "type": "int", "value": 0 },
+        { "op": "print", "args": ["saida2"] },
+        { "label": "fim" }
+      ]
+    }
+  ]
+}

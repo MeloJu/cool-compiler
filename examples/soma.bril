@@ -1,0 +1,6 @@
+@main {
+  primeiro: int = const 20;
+  segundo: int = const 22;
+  resultado: int = add primeiro segundo;
+  print resultado;
+}
